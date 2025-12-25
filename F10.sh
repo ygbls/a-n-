@@ -1,8 +1,8 @@
 #!/bin/bash
 # ===================== 版本信息 =====================
 # 脚本名称: AstrBot+NapCat 智能部署助手
-# 版本号: v2.5.6
-# 最后更新: 2025年12月26日
+# 版本号: v2.5.7
+# 最后更新: 2025年12月27日
 # 功能: 修复共享目录矛盾，统一DNS配置，优化权限管理
 # 声明: 本脚本完全免费，禁止倒卖！
 # 技术支持QQ: 3076737056
@@ -28,7 +28,7 @@ NAPCAT_SHARED_PATH="/app/sharedFolder"
 # 更新配置
 UPDATE_CHECK_URL="https://cdn.jsdelivr.net/gh/ygbls/a-n-@main/F10.sh"
 SCRIPT_BASE_URL="https://cdn.jsdelivr.net/gh/ygbls/a-n-@main/version.txt"
-CURRENT_VERSION="v2.5.6"
+CURRENT_VERSION="v2.5.7"
 
 # ===================== 颜色定义 =====================
 RED='\033[1;31m'
@@ -232,20 +232,133 @@ extract_urls_from_logs() {
     local container_name=$1
     echo -e "\n${CYAN}${ICON_LINK} 从 $container_name 日志提取URL${RESET}"
     
+    # 检查容器是否存在
     if ! docker ps -a --format "{{.Names}}" | grep -q "^${container_name}$"; then
         echo -e "${RED}${ICON_CROSS} 容器 $container_name 不存在${RESET}"
-        return 1
+        
+        # 询问用户是否要部署容器
+        echo -e "${YELLOW}${ICON_WARN} 是否要部署 $container_name 容器？${RESET}"
+        read -p "请输入选择 [y/N]: " deploy_choice
+        
+        if [[ "$deploy_choice" =~ ^[Yy]$ ]]; then
+            case "$container_name" in
+                "astrbot")
+                    if confirm_action "部署AstrBot容器"; then
+                        step3
+                        # 等待容器启动
+                        echo -e "${CYAN}${ICON_LOAD} 等待容器启动...${RESET}"
+                        sleep 5
+                    else
+                        echo -e "${GRAY}操作已取消${RESET}"
+                        return 1
+                    fi
+                    ;;
+                "napcat")
+                    if confirm_action "部署NapCat容器"; then
+                        step4
+                        # 等待容器启动
+                        echo -e "${CYAN}${ICON_LOAD} 等待容器启动...${RESET}"
+                        sleep 5
+                    else
+                        echo -e "${GRAY}操作已取消${RESET}"
+                        return 1
+                    fi
+                    ;;
+                *)
+                    echo -e "${RED}未知容器类型${RESET}"
+                    return 1
+                    ;;
+            esac
+        else
+            return 1
+        fi
     fi
     
-    local urls=$(timeout 10 docker logs "$container_name" 2>/dev/null | grep -Eo 'https?://[^"[:space:]]+' | sort -u)
+    # 检查容器是否在运行
+    local container_state=$(docker inspect -f '{{.State.Status}}' "$container_name" 2>/dev/null || echo "unknown")
+    
+    if [ "$container_state" != "running" ]; then
+        echo -e "${YELLOW}${ICON_WARN} 容器 $container_name 状态: $container_state${RESET}"
+        
+        # 询问是否启动容器
+        echo -e "${YELLOW}${ICON_WARN} 是否要启动 $container_name 容器？${RESET}"
+        read -p "请输入选择 [y/N]: " start_choice
+        
+        if [[ "$start_choice" =~ ^[Yy]$ ]]; then
+            echo -e "${CYAN}${ICON_LOAD} 启动 $container_name 容器...${RESET}"
+            if docker start "$container_name" >/dev/null 2>&1; then
+                echo -e "${GREEN}${ICON_CHECK} 容器启动成功${RESET}"
+                # 等待容器完全启动
+                echo -e "${CYAN}${ICON_LOAD} 等待容器初始化...${RESET}"
+                sleep 8
+            else
+                echo -e "${RED}${ICON_CROSS} 容器启动失败${RESET}"
+                return 1
+            fi
+        else
+            echo -e "${GRAY}操作已取消${RESET}"
+            return 1
+        fi
+    fi
+    
+    # 检查容器是否有日志
+    local log_size=$(docker logs "$container_name" 2>&1 | wc -l)
+    if [ "$log_size" -eq 0 ]; then
+        echo -e "${YELLOW}${ICON_WARN} 容器日志为空，等待5秒后重试...${RESET}"
+        sleep 5
+        log_size=$(docker logs "$container_name" 2>&1 | wc -l)
+        if [ "$log_size" -eq 0 ]; then
+            echo -e "${YELLOW}${ICON_WARN} 容器日志仍然为空，可能容器刚启动或没有输出${RESET}"
+            echo -e "${CYAN}尝试显示最近10条日志:${RESET}"
+            docker logs --tail 10 "$container_name" 2>/dev/null || echo "无法获取日志"
+            return 1
+        fi
+    fi
+    
+    echo -e "${CYAN}${ICON_INFO} 正在从容器日志中提取URL...${RESET}"
+    
+    # 使用timeout防止卡住
+    local urls=$(timeout 15 docker logs "$container_name" 2>&1 | grep -Eo 'https?://[^"[:space:]]+' | sort -u)
     
     if [ -n "$urls" ]; then
-        echo "$urls"
+        local url_count=$(echo "$urls" | wc -l)
+        echo -e "${GREEN}${ICON_CHECK} 找到 ${url_count} 个URL:${RESET}"
+        echo ""
+        echo "$urls" | head -20  # 显示前20个URL
+        if [ "$url_count" -gt 20 ]; then
+            echo -e "${CYAN}... 还有 $((url_count - 20)) 个URL未显示${RESET}"
+        fi
+        
+        # 保存到文件
         local url_file="${LOG_DIR}/${container_name}_urls_$(date +%Y%m%d_%H%M%S).txt"
         echo "$urls" > "$url_file"
-        echo -e "${GREEN}${ICON_CHECK} URL已保存到: $url_file${RESET}"
+        echo -e "\n${GREEN}${ICON_CHECK} URL已保存到: $url_file${RESET}"
+        
+        # 询问是否要复制到共享目录
+        if [ -d "$SHARED_DIR" ]; then
+            echo -e "${CYAN}${ICON_INFO} 是否将URL列表复制到共享目录？${RESET}"
+            read -p "请输入选择 [y/N]: " copy_choice
+            
+            if [[ "$copy_choice" =~ ^[Yy]$ ]]; then
+                cp "$url_file" "$SHARED_DIR/"
+                echo -e "${GREEN}${ICON_CHECK} 已复制到共享目录: $SHARED_DIR/$(basename "$url_file")${RESET}"
+            fi
+        fi
+        
+        return 0
     else
-        echo -e "${YELLOW}${ICON_WARN} 未找到URL或读取超时${RESET}"
+        echo -e "${YELLOW}${ICON_WARN} 未找到URL${RESET}"
+        
+        # 显示一些日志帮助用户了解情况
+        echo -e "\n${CYAN}最近的日志输出（最后5行）:${RESET}"
+        docker logs --tail 5 "$container_name" 2>/dev/null || echo "无法获取日志"
+        
+        echo -e "\n${YELLOW}${ICON_WARN} 可能原因:${RESET}"
+        echo -e "  1. 容器刚启动，还没有生成URL"
+        echo -e "  2. 容器日志中没有URL格式的内容"
+        echo -e "  3. 容器可能需要重新配置"
+        
+        return 1
     fi
 }
 
@@ -1062,7 +1175,7 @@ show_update_changelog() {
     echo -e "${WHITE}           更新日志${RESET}"
     echo -e "${CYAN}════════════════════════════════════════════${RESET}"
     
-    echo -e "${GREEN}v2.5.6 (2025-12-26)${RESET}"
+    echo -e "${GREEN}v2.5.7 (2025-12-26)${RESET}"
     echo -e "  • 修复共享目录路径矛盾"
     echo -e "  • 统一DNS配置为8.8.8.8, 114.114.114.114, 223.5.5.5, 1.1.1.1"
     echo -e "  • 改进共享目录权限管理（775替代777）"
@@ -1141,7 +1254,7 @@ show_manual_update_guide() {
 print_header() {
     clear
     echo -e "${MAGENTA}════════════════════════════════════════════════════════════════${RESET}"
-    echo -e "${CYAN}  ╔═╗╔═╗╔╦╗╔═╗╦═╗╔╦╗  ╔═╗╔═╗╔╦╗  ${WHITE}智能部署助手 v2.5.6${RESET}"
+    echo -e "${CYAN}  ╔═╗╔═╗╔╦╗╔═╗╦═╗╔╦╗  ╔═╗╔═╗╔╦╗  ${WHITE}智能部署助手 v2.5.7${RESET}"
     echo -e "${CYAN}  ║╣ ║ ║║║║║╣ ╠╦╝ ║   ╠═╝║ ║║║║  ${GRAY}AstrBot + NapCat${RESET}"
     echo -e "${CYAN}  ╚═╝╚═╝╩ ╩╚═╝╩╚═ ╩   ╩  ╚═╝╩ ╩  ${YELLOW}修复优化版${RESET}"
     echo -e "${MAGENTA}════════════════════════════════════════════════════════════════${RESET}"
@@ -2100,12 +2213,44 @@ show_extended_menu() {
                 echo -e "${WHITE}          提取日志URL${RESET}"
                 echo -e "${BLUE}════════════════════════════════════════════${RESET}"
                 
-                [ "$STEP3_DONE" = false ] && { echo -e "${YELLOW}${ICON_WARN} 需要先部署AstrBot${RESET}"; return; }
-                [ "$STEP4_DONE" = false ] && { echo -e "${YELLOW}${ICON_WARN} 需要先部署NapCat${RESET}"; return; }
+                # 显示选择菜单
+                echo -e "${CYAN}选择要提取URL的容器:${RESET}"
+                echo -e "${WHITE}  1${RESET} ${GREEN}提取AstrBot日志URL${RESET}"
+                echo -e "${WHITE}  2${RESET} ${GREEN}提取NapCat日志URL${RESET}"
+                echo -e "${WHITE}  3${RESET} ${CYAN}提取两个容器日志URL${RESET}"
+                echo -e "${WHITE}  0${RESET} ${GRAY}返回${RESET}"
                 
-                extract_urls_from_logs "astrbot"
-                echo -e "\n${GRAY}────────────────────────────────────────${RESET}"
-                extract_urls_from_logs "napcat"
+                echo -ne "\n${YELLOW}请选择（0-3）: ${RESET}"
+                read -r url_choice
+                
+                case "$url_choice" in
+                    1)
+                        echo -e "\n${CYAN}════════════════════════════════════════════${RESET}"
+                        echo -e "${WHITE}          提取AstrBot日志URL${RESET}"
+                        echo -e "${CYAN}════════════════════════════════════════════${RESET}"
+                        extract_urls_from_logs "astrbot"
+                        ;;
+                    2)
+                        echo -e "\n${CYAN}════════════════════════════════════════════${RESET}"
+                        echo -e "${WHITE}          提取NapCat日志URL${RESET}"
+                        echo -e "${CYAN}════════════════════════════════════════════${RESET}"
+                        extract_urls_from_logs "napcat"
+                        ;;
+                    3)
+                        echo -e "\n${CYAN}════════════════════════════════════════════${RESET}"
+                        echo -e "${WHITE}          提取两个容器日志URL${RESET}"
+                        echo -e "${CYAN}════════════════════════════════════════════${RESET}"
+                        extract_urls_from_logs "astrbot"
+                        echo -e "\n${GRAY}────────────────────────────────────────${RESET}"
+                        extract_urls_from_logs "napcat"
+                        ;;
+                    0)
+                        continue
+                        ;;
+                    *)
+                        echo -e "${RED}无效选择！${RESET}"
+                        ;;
+                esac
                 
                 echo -e "\n${GREEN}按任意键继续...${RESET}"
                 read -p ""
@@ -2160,7 +2305,7 @@ show_main_menu() {
 init_script() {
     echo -e "${MAGENTA}"
     echo "╔══════════════════════════════════════════════════════════╗"
-    echo "║              智能部署助手 v2.5.6 初始化                 ║"
+    echo "║              智能部署助手 v2.5.7 初始化                 ║"
     echo "║          修复共享目录矛盾，统一DNS配置                   ║"
     echo "║          优化权限管理，改进更新检测                     ║"
     echo "║          本脚本完全免费，严禁倒卖！                     ║"
