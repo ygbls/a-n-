@@ -26,7 +26,7 @@ ASTROBOT_SHARED_PATH="/app/sharedFolder"
 NAPCAT_SHARED_PATH="/app/sharedFolder"
 
 # 更新配置
-UPDATE_CHECK_URL="https://raw.githubusercontent.com/ygbls/a-n-/blob/main/README.md"
+UPDATE_CHECK_URL="https://raw.githubusercontent.com/ygbls/a-n-/blob/main/version.txt"
 SCRIPT_BASE_URL="https://raw.githubusercontent.com/ygbls/a-n-/blob/main/F10.sh"
 CURRENT_VERSION="v2.5.2"
 
