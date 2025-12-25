@@ -1,9 +1,9 @@
 #!/bin/bash
 # ===================== 版本信息 =====================
 # 脚本名称: AstrBot+NapCat 智能部署助手
-# 版本号: v2.5.4
+# 版本号: v2.5.5
 # 最后更新: 2025年12月25日
-# 功能: 修复共享目录挂载问题
+# 功能: 增强更新检测错误处理，优化网速显示
 # 声明: 本脚本完全免费，禁止倒卖！
 # 技术支持QQ: 3076737056
 
@@ -28,7 +28,7 @@ NAPCAT_SHARED_PATH="/app/sharedFolder"
 # 更新配置
 UPDATE_CHECK_URL="https://raw.githubusercontent.com/ygbls/a-n-/refs/heads/main/version.txt"
 SCRIPT_BASE_URL="https://raw.githubusercontent.com/ygbls/a-n-/refs/heads/main/F10.sh"
-CURRENT_VERSION="v2.5.4"
+CURRENT_VERSION="v2.5.5"
 
 # ===================== 颜色定义 =====================
 RED='\033[1;31m'
@@ -675,7 +675,8 @@ check_for_updates() {
     
     # 检查网络连通性
     if ! test_network_connectivity; then
-        echo -e "${YELLOW}${ICON_WARN} 网络连接异常，无法检查更新${RESET}"
+        echo -e "${RED}${ICON_CROSS} 网络连接异常，无法检查更新${RESET}"
+        echo -e "${YELLOW}${ICON_WARN} 请检查网络设置或稍后重试${RESET}"
         return 1
     fi
     
@@ -684,29 +685,96 @@ check_for_updates() {
     # 尝试从多个源获取版本信息
     local remote_version=""
     local update_urls=(
-        "https://raw.githubusercontent.com/your-repo/astrbot-deploy/main/version.txt"
-        "https://gist.githubusercontent.com/your-gist/version/raw/version.txt"
-        "https://pastebin.com/raw/xxxxxxxx"
+        "https://raw.githubusercontent.com/ygbls/a-n-/refs/heads/main/version.txt"
+        "https://fastly.jsdelivr.net/gh/ygbls/a-n-@main/version.txt"
+        "https://cdn.jsdelivr.net/gh/ygbls/a-n-@main/version.txt"
     )
     
-    for url in "${update_urls[@]}"; do
-        echo -ne "尝试从源获取... "
-        remote_version=$(timeout 10 curl -s "$url" 2>/dev/null | head -n1 | tr -d '\n' | tr -d '\r')
-        if [ -n "$remote_version" ] && [[ "$remote_version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
-            echo -e "${GREEN}成功${RESET}"
-            break
+    local error_messages=""
+    local success_count=0
+    local error_count=0
+    
+    for i in "${!update_urls[@]}"; do
+        local url="${update_urls[$i]}"
+        echo -ne "尝试源 $(($i+1)): "
+        
+        # 使用timeout限制请求时间
+        local temp_file="/tmp/update_check_$(date +%s).tmp"
+        local curl_output=$(timeout 15 curl -s -w "%{http_code}" "$url" 2>&1)
+        local curl_exit_code=$?
+        local http_code="${curl_output: -3}"
+        local content="${curl_output%???}"
+        
+        # 清理可能的多余字符
+        content=$(echo "$content" | tr -d '\r\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        
+        # 检查curl执行结果
+        if [ $curl_exit_code -eq 0 ]; then
+            if [[ "$http_code" == "200" ]] || [[ "$http_code" == "000" ]]; then
+                if [[ "$content" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+                    remote_version="$content"
+                    echo -e "${GREEN}成功获取版本: ${remote_version}${RESET}"
+                    ((success_count++))
+                    break
+                else
+                    echo -e "${YELLOW}版本格式无效${RESET}"
+                    error_messages+="源$(($i+1)): 版本格式无效（内容: ${content:0:20}...）\n"
+                    ((error_count++))
+                fi
+            elif [[ "$http_code" == "404" ]]; then
+                echo -e "${YELLOW}文件不存在（404）${RESET}"
+                error_messages+="源$(($i+1)): 版本文件不存在（404）\n"
+                ((error_count++))
+            elif [[ "$http_code" == "403" ]]; then
+                echo -e "${YELLOW}访问被拒绝（403）${RESET}"
+                error_messages+="源$(($i+1)): 访问被拒绝（403）\n"
+                ((error_count++))
+            elif [[ "$http_code" == "502" ]] || [[ "$http_code" == "503" ]]; then
+                echo -e "${YELLOW}服务器错误（${http_code}）${RESET}"
+                error_messages+="源$(($i+1)): 服务器错误（${http_code}）\n"
+                ((error_count++))
+            else
+                echo -e "${YELLOW}HTTP错误（${http_code}）${RESET}"
+                error_messages+="源$(($i+1)): HTTP错误（${http_code}）\n"
+                ((error_count++))
+            fi
+        elif [ $curl_exit_code -eq 124 ]; then
+            echo -e "${YELLOW}请求超时${RESET}"
+            error_messages+="源$(($i+1)): 请求超时\n"
+            ((error_count++))
+        elif [ $curl_exit_code -eq 6 ]; then
+            echo -e "${YELLOW}无法解析主机${RESET}"
+            error_messages+="源$(($i+1)): 无法解析主机\n"
+            ((error_count++))
+        elif [ $curl_exit_code -eq 7 ]; then
+            echo -e "${YELLOW}无法连接到主机${RESET}"
+            error_messages+="源$(($i+1)): 无法连接到主机\n"
+            ((error_count++))
+        elif [ $curl_exit_code -eq 28 ]; then
+            echo -e "${YELLOW}操作超时${RESET}"
+            error_messages+="源$(($i+1)): 操作超时\n"
+            ((error_count++))
         else
-            echo -e "${RED}失败${RESET}"
-            remote_version=""
+            echo -e "${YELLOW}Curl错误（${curl_exit_code}）${RESET}"
+            error_messages+="源$(($i+1)): Curl错误（${curl_exit_code}）\n"
+            ((error_count++))
         fi
     done
     
     if [ -z "$remote_version" ]; then
-        echo -e "${YELLOW}${ICON_WARN} 无法获取远程版本信息${RESET}"
-        echo -e "${GRAY}可能原因:${RESET}"
-        echo -e "  1. 网络连接问题"
-        echo -e "  2. 更新服务器暂时不可用"
-        echo -e "  3. 版本文件格式不正确"
+        echo -e "\n${RED}${ICON_CROSS} 无法获取远程版本信息${RESET}"
+        echo -e "${YELLOW}${ICON_WARN} 详细错误信息:${RESET}"
+        echo -e "$error_messages"
+        echo -e "${GRAY}尝试了 ${#update_urls[@]} 个源，成功: ${success_count}，失败: ${error_count}${RESET}"
+        echo -e "\n${YELLOW}可能原因:${RESET}"
+        echo -e "  1. GitHub可能被墙，请检查网络连接"
+        echo -e "  2. 版本文件不存在或路径错误"
+        echo -e "  3. 服务器暂时不可用"
+        echo -e "  4. 防火墙或代理设置问题"
+        echo -e "\n${CYAN}解决方案:${RESET}"
+        echo -e "  1. 检查网络连接是否正常"
+        echo -e "  2. 等待一段时间后重试"
+        echo -e "  3. 手动访问更新源检查"
         return 1
     fi
     
@@ -792,7 +860,15 @@ update_script_auto() {
     
     # 下载新版本
     local temp_file="/tmp/astr_deploy_new.sh"
+    
+    # 启动网速监控
+    monitor_speed_mb &
+    speed_pid=$!
+    
     if timeout 30 curl -s -o "$temp_file" "$SCRIPT_BASE_URL"; then
+        safe_kill "$speed_pid"
+        printf "\r\033[K"  # 清除网速监控行
+        
         # 检查下载的文件是否有效
         if [ -s "$temp_file" ] && head -n 5 "$temp_file" | grep -q "AstrBot+NapCat 智能部署助手"; then
             # 替换当前脚本
@@ -814,6 +890,8 @@ update_script_auto() {
             cp "$backup_file" "$0"
         fi
     else
+        safe_kill "$speed_pid"
+        printf "\r\033[K"  # 清除网速监控行
         echo -e "${RED}${ICON_CROSS} 下载失败，请检查网络连接${RESET}"
         echo -e "${YELLOW}${ICON_WARN} 更新已取消，脚本未更改${RESET}"
     fi
@@ -827,7 +905,12 @@ show_update_changelog() {
     echo -e "${WHITE}           更新日志${RESET}"
     echo -e "${CYAN}════════════════════════════════════════════${RESET}"
     
-    echo -e "${GREEN}v2.5.4 (2025-12-25)${RESET}"
+    echo -e "${GREEN}v2.5.5 (2025-12-25)${RESET}"
+    echo -e "  • 增强更新检测错误处理"
+    echo -e "  • 优化网速显示功能"
+    echo -e "  • 添加多个更新源支持"
+    
+    echo -e "\n${GREEN}v2.5.4 (2025-12-25)${RESET}"
     echo -e "  • 修复共享目录挂载问题"
     echo -e "  • 优化容器状态检查逻辑"
     echo -e "  • 添加扩展功能菜单"
@@ -844,7 +927,7 @@ show_update_changelog() {
     
     echo -e "\n${CYAN}════════════════════════════════════════════${RESET}"
     echo -e "${YELLOW}最新版本 ${remote_version} 的更新内容请访问:${RESET}"
-    echo -e "${WHITE}https://github.com/your-repo/astrbot-deploy${RESET}"
+    echo -e "${WHITE}https://github.com/ygbls/a-n-${RESET}"
     
     echo -e "\n${GREEN}按任意键返回...${RESET}"
     read -p ""
@@ -887,9 +970,9 @@ show_manual_update_guide() {
 print_header() {
     clear
     echo -e "${MAGENTA}════════════════════════════════════════════════════════════════${RESET}"
-    echo -e "${CYAN}  ╔═╗╔═╗╔╦╗╔═╗╦═╗╔╦╗  ╔═╗╔═╗╔╦╗  ${WHITE}智能部署助手 v2.5.4${RESET}"
+    echo -e "${CYAN}  ╔═╗╔═╗╔╦╗╔═╗╦═╗╔╦╗  ╔═╗╔═╗╔╦╗  ${WHITE}智能部署助手 v2.5.5${RESET}"
     echo -e "${CYAN}  ║╣ ║ ║║║║║╣ ╠╦╝ ║   ╠═╝║ ║║║║  ${GRAY}AstrBot + NapCat${RESET}"
-    echo -e "${CYAN}  ╚═╝╚═╝╩ ╩╚═╝╩╚═ ╩   ╩  ╚═╝╩ ╩  ${YELLOW}修复共享目录挂载版${RESET}"
+    echo -e "${CYAN}  ╚═╝╚═╝╩ ╩╚═╝╩╚═ ╩   ╩  ╚═╝╩ ╩  ${YELLOW}增强更新检测版${RESET}"
     echo -e "${MAGENTA}════════════════════════════════════════════════════════════════${RESET}"
     echo ""
 }
@@ -1007,6 +1090,8 @@ step2() {
     
     echo -e "${CYAN}${ICON_LOAD} 开始安装Docker...${RESET}"
     
+    # 启动网速监控（仅显示下载速度）
+    echo -e "\n${CYAN}${ICON_NETWORK} 下载速度监控（M/s）${RESET}"
     monitor_speed_mb &
     speed_pid=$!
     
@@ -1025,6 +1110,7 @@ step2() {
     
     if apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin; then
         safe_kill "$speed_pid"
+        printf "\r\033[K"  # 清除网速监控行
         
         echo -e "${GREEN}${ICON_CHECK} Docker安装完成${RESET}"
         
@@ -1043,6 +1129,7 @@ EOF
         systemctl enable docker >/dev/null 2>&1
     else
         safe_kill "$speed_pid"
+        printf "\r\033[K"  # 清除网速监控行
         echo -e "${RED}${ICON_CROSS} Docker安装失败${RESET}"
         return 1
     fi
@@ -1115,21 +1202,26 @@ step3() {
     
     echo -e "${CYAN}${ICON_LOAD} 开始部署AstrBot...${RESET}"
     
+    # 启动网速监控（仅显示下载速度）
+    echo -e "\n${CYAN}${ICON_NETWORK} AstrBot镜像下载速度（M/s）${RESET}"
     monitor_speed_mb &
     speed_pid=$!
     
     mkdir -p astrbot/data astrbot/config
     
-    echo -e "${CYAN}${ICON_LOAD} 拉取镜像...${RESET}"
+    echo -e "${CYAN}${ICON_LOAD} 拉取AstrBot镜像...${RESET}"
     if docker pull soulter/astrbot:latest; then
-        echo -e "${GREEN}${ICON_CHECK} 镜像拉取成功${RESET}"
+        safe_kill "$speed_pid"
+        printf "\r\033[K"  # 清除网速监控行
+        echo -e "${GREEN}${ICON_CHECK} AstrBot镜像拉取成功${RESET}"
     else
         safe_kill "$speed_pid"
-        echo -e "${RED}${ICON_CROSS} 镜像拉取失败${RESET}"
+        printf "\r\033[K"  # 清除网速监控行
+        echo -e "${RED}${ICON_CROSS} AstrBot镜像拉取失败${RESET}"
         return 1
     fi
     
-    echo -e "${CYAN}${ICON_LOAD} 启动容器...${RESET}"
+    echo -e "${CYAN}${ICON_LOAD} 启动AstrBot容器...${RESET}"
     if docker run -itd \
         -p 6180-6200:6180-6200 \
         -p 11451:11451 \
@@ -1139,8 +1231,6 @@ step3() {
         --name astrbot \
         --restart=unless-stopped \
         soulter/astrbot:latest; then
-        
-        safe_kill "$speed_pid"
         
         echo -e "${GREEN}${ICON_CHECK} AstrBot启动成功${RESET}"
         
@@ -1155,7 +1245,6 @@ step3() {
         echo -e "  ${WHITE}共享目录: ${SHARED_DIR} -> ${ASTROBOT_SHARED_PATH}${RESET}"
         
     else
-        safe_kill "$speed_pid"
         echo -e "${RED}${ICON_CROSS} AstrBot启动失败${RESET}"
         return 1
     fi
@@ -1228,21 +1317,26 @@ step4() {
     
     echo -e "${CYAN}${ICON_LOAD} 开始部署NapCat...${RESET}"
     
+    # 启动网速监控（仅显示下载速度）
+    echo -e "\n${CYAN}${ICON_NETWORK} NapCat镜像下载速度（M/s）${RESET}"
     monitor_speed_mb &
     speed_pid=$!
     
     mkdir -p napcat/data napcat/config
     
-    echo -e "${CYAN}${ICON_LOAD} 拉取镜像...${RESET}"
+    echo -e "${CYAN}${ICON_LOAD} 拉取NapCat镜像...${RESET}"
     if docker pull mlikiowa/napcat-docker:latest; then
-        echo -e "${GREEN}${ICON_CHECK} 镜像拉取成功${RESET}"
+        safe_kill "$speed_pid"
+        printf "\r\033[K"  # 清除网速监控行
+        echo -e "${GREEN}${ICON_CHECK} NapCat镜像拉取成功${RESET}"
     else
         safe_kill "$speed_pid"
-        echo -e "${RED}${ICON_CROSS} 镜像拉取失败${RESET}"
+        printf "\r\033[K"  # 清除网速监控行
+        echo -e "${RED}${ICON_CROSS} NapCat镜像拉取失败${RESET}"
         return 1
     fi
     
-    echo -e "${CYAN}${ICON_LOAD} 启动容器...${RESET}"
+    echo -e "${CYAN}${ICON_LOAD} 启动NapCat容器...${RESET}"
     if docker run -d \
         -e NAPCAT_GID=$(id -g) \
         -e NAPCAT_UID=$(id -u) \
@@ -1256,8 +1350,6 @@ step4() {
         --restart=always \
         mlikiowa/napcat-docker:latest; then
         
-        safe_kill "$speed_pid"
-        
         echo -e "${GREEN}${ICON_CHECK} NapCat启动成功${RESET}"
         sleep 3
         
@@ -1269,7 +1361,6 @@ step4() {
         echo -e "  ${WHITE}共享目录: ${SHARED_DIR} -> ${NAPCAT_SHARED_PATH}${RESET}"
         
     else
-        safe_kill "$speed_pid"
         echo -e "${RED}${ICON_CROSS} NapCat启动失败${RESET}"
         return 1
     fi
@@ -1502,8 +1593,8 @@ show_main_menu() {
 init_script() {
     echo -e "${MAGENTA}"
     echo "╔══════════════════════════════════════════════════════════╗"
-    echo "║              智能部署助手 v2.5.4 初始化                 ║"
-    echo "║          已修复共享目录挂载问题                         ║"
+    echo "║              智能部署助手 v2.5.5 初始化                 ║"
+    echo "║          增强更新检测，优化网速显示                     ║"
     echo "║          本脚本完全免费，严禁倒卖！                     ║"
     echo "║          技术支持QQ: 3076737056                         ║"
     echo "╚══════════════════════════════════════════════════════════╝"
