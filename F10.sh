@@ -1,7 +1,7 @@
 #!/bin/bash
 # ===================== 版本信息 =====================
 # 脚本名称: AstrBot+NapCat 智能部署助手
-# 版本号: v2.5.2
+# 版本号: v2.5.4
 # 最后更新: 2025年12月25日
 # 功能: 修复共享目录挂载问题
 # 声明: 本脚本完全免费，禁止倒卖！
@@ -26,9 +26,9 @@ ASTROBOT_SHARED_PATH="/app/sharedFolder"
 NAPCAT_SHARED_PATH="/app/sharedFolder"
 
 # 更新配置
-UPDATE_CHECK_URL="https://raw.githubusercontent.com/ygbls/a-n-/blob/main/version.txt"
-SCRIPT_BASE_URL="https://raw.githubusercontent.com/ygbls/a-n-/blob/main/F10.sh"
-CURRENT_VERSION="v2.5.2"
+UPDATE_CHECK_URL="https://raw.githubusercontent.com/ygbls/a-n-/refs/heads/main/version.txt"
+SCRIPT_BASE_URL="https://raw.githubusercontent.com/ygbls/a-n-/refs/heads/main/F10.sh"
+CURRENT_VERSION="v2.5.4"
 
 # ===================== 颜色定义 =====================
 RED='\033[1;31m'
@@ -827,7 +827,7 @@ show_update_changelog() {
     echo -e "${WHITE}           更新日志${RESET}"
     echo -e "${CYAN}════════════════════════════════════════════${RESET}"
     
-    echo -e "${GREEN}v2.5.2 (2025-12-25)${RESET}"
+    echo -e "${GREEN}v2.5.4 (2025-12-25)${RESET}"
     echo -e "  • 修复共享目录挂载问题"
     echo -e "  • 优化容器状态检查逻辑"
     echo -e "  • 添加扩展功能菜单"
@@ -887,7 +887,7 @@ show_manual_update_guide() {
 print_header() {
     clear
     echo -e "${MAGENTA}════════════════════════════════════════════════════════════════${RESET}"
-    echo -e "${CYAN}  ╔═╗╔═╗╔╦╗╔═╗╦═╗╔╦╗  ╔═╗╔═╗╔╦╗  ${WHITE}智能部署助手 v2.5.2${RESET}"
+    echo -e "${CYAN}  ╔═╗╔═╗╔╦╗╔═╗╦═╗╔╦╗  ╔═╗╔═╗╔╦╗  ${WHITE}智能部署助手 v2.5.4${RESET}"
     echo -e "${CYAN}  ║╣ ║ ║║║║║╣ ╠╦╝ ║   ╠═╝║ ║║║║  ${GRAY}AstrBot + NapCat${RESET}"
     echo -e "${CYAN}  ╚═╝╚═╝╩ ╩╚═╝╩╚═ ╩   ╩  ╚═╝╩ ╩  ${YELLOW}修复共享目录挂载版${RESET}"
     echo -e "${MAGENTA}════════════════════════════════════════════════════════════════${RESET}"
@@ -1502,7 +1502,7 @@ show_main_menu() {
 init_script() {
     echo -e "${MAGENTA}"
     echo "╔══════════════════════════════════════════════════════════╗"
-    echo "║              智能部署助手 v2.5.2 初始化                 ║"
+    echo "║              智能部署助手 v2.5.4 初始化                 ║"
     echo "║          已修复共享目录挂载问题                         ║"
     echo "║          本脚本完全免费，严禁倒卖！                     ║"
     echo "║          技术支持QQ: 3076737056                         ║"
