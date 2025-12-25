@@ -1,9 +1,9 @@
 #!/bin/bash
 # ===================== 版本信息 =====================
 # 脚本名称: AstrBot+NapCat 智能部署助手
-# 版本号: v2.5.5
-# 最后更新: 2025年12月25日
-# 功能: 增强更新检测错误处理，优化网速显示
+# 版本号: v2.5.6
+# 最后更新: 2025年12月26日
+# 功能: 修复共享目录矛盾，统一DNS配置，优化权限管理
 # 声明: 本脚本完全免费，禁止倒卖！
 # 技术支持QQ: 3076737056
 
@@ -20,15 +20,15 @@ BACKUP_DIR="/var/backup/astr_deploy"
 MIN_DISK_SPACE=5
 REQUIRED_DOCKER_VERSION="20.10"
 
-# 共享目录配置
+# 共享目录配置 - 修复：统一容器内路径
 SHARED_DIR="/opt/astrbot/shared"
 ASTROBOT_SHARED_PATH="/app/sharedFolder"
 NAPCAT_SHARED_PATH="/app/sharedFolder"
 
 # 更新配置
-UPDATE_CHECK_URL="https://raw.githubusercontent.com/ygbls/a-n-/refs/heads/main/version.txt"
-SCRIPT_BASE_URL="https://raw.githubusercontent.com/ygbls/a-n-/refs/heads/main/F10.sh"
-CURRENT_VERSION="v2.5.5"
+UPDATE_CHECK_URL="https://cdn.jsdelivr.net/gh/ygbls/a-n-@main/F10.sh"
+SCRIPT_BASE_URL="https://cdn.jsdelivr.net/gh/ygbls/a-n-@main/version.txt"
+CURRENT_VERSION="v2.5.6"
 
 # ===================== 颜色定义 =====================
 RED='\033[1;31m'
@@ -68,6 +68,7 @@ ICON_RAM="💾"
 ICON_DISK="💿"
 ICON_UPDATE="🔄"
 ICON_DOWNLOAD="⬇"
+ICON_DNS="📡"
 
 # ===================== 全局变量定义 =====================
 STEP1_DONE=false
@@ -321,7 +322,7 @@ check_container_status() {
                 if docker inspect "$container_name" 2>/dev/null | grep -q "\"Source\": \"$SHARED_DIR\""; then
                     echo -e "${GREEN}${ICON_CHECK} 共享目录已挂载${RESET}"
                 else
-                    echo -e "${RED}${ICON_CROSS} 共享目录未挂载【多试几遍，若多次确认未挂载则去扩展功能执行修复】${RESET}"
+                    echo -e "${YELLOW}${ICON_WARN} 共享目录未挂载【请运行扩展功能中的修复工具】${RESET}"
                 fi
                 ;;
             "created")
@@ -409,8 +410,15 @@ setup_shared_directory() {
     # 创建共享目录
     mkdir -p "$SHARED_DIR"
     
-    # 设置更宽松的权限，确保容器可以读写
-    chmod 777 "$SHARED_DIR"
+    # 设置更安全的权限：775（所有者可读写执行，组可读执行，其他用户只读）
+    chmod 775 "$SHARED_DIR"
+    
+    # 设置当前用户和docker组为所有者
+    if id -u docker >/dev/null 2>&1; then
+        chown $(id -u):docker "$SHARED_DIR"
+    else
+        chown $(id -u):$(id -g) "$SHARED_DIR"
+    fi
     
     echo -e "${GREEN}${ICON_CHECK} 共享目录已创建: ${WHITE}$SHARED_DIR${RESET}"
     echo -e "${GRAY}权限: $(ls -ld "$SHARED_DIR" | awk '{print $1}')${RESET}"
@@ -437,13 +445,13 @@ check_shared_directory() {
         if docker inspect astrbot 2>/dev/null | grep -q "\"Source\": \"$SHARED_DIR\""; then
             echo -e "${GREEN}${ICON_CHECK} AstrBot已挂载共享目录${RESET}"
         else
-            echo -e "${YELLOW}${ICON_WARN} AstrBot未挂载共享目录【多测试几遍，若一直是此消息，再去扩展执行修复】${RESET}"
+            echo -e "${YELLOW}${ICON_WARN} AstrBot未挂载共享目录${RESET}"
         fi
         
         if docker inspect napcat 2>/dev/null | grep -q "\"Source\": \"$SHARED_DIR\""; then
             echo -e "${GREEN}${ICON_CHECK} NapCat已挂载共享目录${RESET}"
         else
-            echo -e "${YELLOW}${ICON_WARN} NapCat未挂载共享目录【多测试几遍，若一直是此消息，再去扩展执行修复】${RESET}"
+            echo -e "${YELLOW}${ICON_WARN} NapCat未挂载共享目录${RESET}"
         fi
         
         if [ "$file_count" -gt 0 ]; then
@@ -564,8 +572,9 @@ test_shared_folder() {
         echo -e "${YELLOW}两个容器都无法访问共享目录${RESET}"
         echo -e "\n${YELLOW}解决方案:${RESET}"
         echo -e "  1. 重新部署两个容器"
-        echo -e "  2. 检查共享目录权限: chmod 777 $SHARED_DIR"
+        echo -e "  2. 检查共享目录权限: chmod 775 $SHARED_DIR"
         echo -e "  3. 手动检查容器挂载: docker inspect <容器名>"
+        echo -e "  4. 运行扩展功能中的修复工具"
     fi
 }
 
@@ -603,14 +612,24 @@ fix_shared_mount() {
     
     # 备份重要数据
     echo -e "\n${YELLOW}${ICON_WARN} 备份容器数据...${RESET}"
-    mkdir -p /tmp/container_backup_$(date +%Y%m%d)
-    docker inspect astrbot > /tmp/container_backup_$(date +%Y%m%d)/astrbot.json 2>/dev/null
-    docker inspect napcat > /tmp/container_backup_$(date +%Y%m%d)/napcat.json 2>/dev/null
+    local backup_dir="/tmp/container_backup_$(date +%Y%m%d_%H%M%S)"
+    mkdir -p "$backup_dir"
+    
+    if $astrbot_running; then
+        docker cp astrbot:/AstrBot/data "$backup_dir/astrbot_data" 2>/dev/null
+        docker inspect astrbot > "$backup_dir/astrbot.json" 2>/dev/null
+    fi
+    
+    if $napcat_running; then
+        docker cp napcat:/app/data "$backup_dir/napcat_data" 2>/dev/null
+        docker inspect napcat > "$backup_dir/napcat.json" 2>/dev/null
+    fi
+    
+    echo -e "${GREEN}${ICON_CHECK} 数据已备份到: $backup_dir${RESET}"
     
     # 重新创建共享目录
     echo -e "\n${CYAN}重新设置共享目录...${RESET}"
-    mkdir -p "$SHARED_DIR"
-    chmod 777 "$SHARED_DIR"
+    setup_shared_directory
     
     # 停止并删除容器
     echo -e "\n${YELLOW}${ICON_WARN} 重启容器...${RESET}"
@@ -621,14 +640,14 @@ fix_shared_mount() {
         docker rm astrbot >/dev/null 2>&1
         
         # 重新运行AstrBot（带共享目录挂载）
-        docker run -itd \
+        docker run -d \
             -p 6180-6200:6180-6200 \
             -p 11451:11451 \
             -v "$SHARED_DIR:$ASTROBOT_SHARED_PATH" \
             -v "$(pwd)/astrbot/data:/AstrBot/data" \
             -v /etc/localtime:/etc/localtime:ro \
             --name astrbot \
-            --restart=unless-stopped \
+            --restart=always \
             soulter/astrbot:latest
     fi
     
@@ -655,14 +674,138 @@ fix_shared_mount() {
     echo -e "\n${GREEN}${ICON_CHECK} 容器重启完成！${RESET}"
     
     # 等待容器启动
-    sleep 3
+    sleep 5
     
     # 验证修复
     echo -e "\n${CYAN}验证修复结果...${RESET}"
     test_shared_folder
     
     echo -e "\n${GREEN}修复完成！${RESET}"
-    echo -e "备份文件保存在: /tmp/container_backup_$(date +%Y%m%d)/"
+    echo -e "备份文件保存在: $backup_dir"
+    echo -e "${YELLOW}如需恢复，请手动复制备份文件${RESET}"
+}
+
+# ===================== DNS修复功能 =====================
+fix_dns_configuration() {
+    echo -e "\n${CYAN}${ICON_DNS} DNS配置修复工具 ${RESET}"
+    echo -e "${CYAN}════════════════════════════════════════════${RESET}"
+    
+    if ! confirm_action "修复DNS配置（修改/etc/systemd/resolved.conf并重启服务）"; then
+        return
+    fi
+    
+    echo -e "${CYAN}${ICON_INFO} 步骤1：备份原始配置文件...${RESET}"
+    
+    # 备份原始配置文件
+    if [ -f "/etc/systemd/resolved.conf" ]; then
+        local backup_file="/etc/systemd/resolved.conf.bak.$(date +%Y%m%d_%H%M%S)"
+        cp /etc/systemd/resolved.conf "$backup_file"
+        echo -e "${GREEN}${ICON_CHECK} 原始配置已备份到: $backup_file${RESET}"
+    fi
+    
+    echo -e "${CYAN}${ICON_INFO} 步骤2：修改/etc/systemd/resolved.conf...${RESET}"
+    
+    # 创建新的resolved.conf文件 - 使用统一配置
+    cat > /etc/systemd/resolved.conf << 'EOF'
+# DNS配置优化
+[Resolve]
+DNS=8.8.8.8 114.114.114.114 223.5.5.5 1.1.1.1
+FallbackDNS=208.67.222.222 208.67.220.220
+Domains=~
+LLMNR=no
+MulticastDNS=no
+DNSSEC=no
+DNSOverTLS=no
+Cache=yes
+DNSStubListener=yes
+ReadEtcHosts=yes
+EOF
+    
+    echo -e "${GREEN}${ICON_CHECK} /etc/systemd/resolved.conf 配置完成${RESET}"
+    
+    echo -e "${CYAN}${ICON_INFO} 步骤3：重启域名解析服务...${RESET}"
+    
+    # 重启systemd-resolved服务
+    if systemctl restart systemd-resolved; then
+        echo -e "${GREEN}${ICON_CHECK} systemd-resolved服务重启成功${RESET}"
+        
+        # 启用服务（如果尚未启用）
+        systemctl enable systemd-resolved >/dev/null 2>&1
+        echo -e "${GREEN}${ICON_CHECK} systemd-resolved服务已启用${RESET}"
+    else
+        echo -e "${RED}${ICON_CROSS} systemd-resolved服务重启失败${RESET}"
+        return 1
+    fi
+    
+    echo -e "${CYAN}${ICON_INFO} 步骤4：更新/etc/resolv.conf软链接...${RESET}"
+    
+    # 备份当前的/etc/resolv.conf
+    if [ -f "/etc/resolv.conf" ]; then
+        local resolv_backup="/etc/resolv.conf.bak.$(date +%Y%m%d_%H%M%S)"
+        cp /etc/resolv.conf "$resolv_backup"
+        echo -e "${GREEN}${ICON_CHECK} /etc/resolv.conf 已备份到: $resolv_backup${RESET}"
+        
+        # 删除原有的软链接或文件
+        rm -f /etc/resolv.conf
+    fi
+    
+    # 创建新的软链接
+    if ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf; then
+        echo -e "${GREEN}${ICON_CHECK} 软链接创建成功${RESET}"
+        echo -e "${GRAY}/etc/resolv.conf -> /run/systemd/resolve/resolv.conf${RESET}"
+    else
+        echo -e "${RED}${ICON_CROSS} 软链接创建失败${RESET}"
+        return 1
+    fi
+    
+    # 验证DNS配置
+    echo -e "${CYAN}${ICON_INFO} 步骤5：验证DNS配置...${RESET}"
+    
+    echo -e "\n${WHITE}当前DNS配置:${RESET}"
+    echo -e "${GRAY}$(cat /etc/resolv.conf)${RESET}"
+    
+    echo -e "\n${WHITE}测试DNS解析...${RESET}"
+    local test_domains=("google.com" "baidu.com" "github.com" "qq.com")
+    local success_count=0
+    
+    for domain in "${test_domains[@]}"; do
+        echo -n "解析 $domain ... "
+        if timeout 5 dig "$domain" +short | grep -q '[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}'; then
+            echo -e "${GREEN}${ICON_CHECK}${RESET}"
+            ((success_count++))
+        else
+            echo -e "${RED}${ICON_CROSS}${RESET}"
+        fi
+    done
+    
+    # 测试网络连通性
+    echo -e "\n${WHITE}测试网络连通性...${RESET}"
+    test_network_connectivity
+    
+    # 显示修复结果
+    echo -e "\n${CYAN}════════════════════════════════════════════${RESET}"
+    echo -e "${WHITE}          DNS修复完成总结${RESET}"
+    echo -e "${CYAN}════════════════════════════════════════════${RESET}"
+    
+    if [ "$success_count" -ge 3 ]; then
+        echo -e "${GREEN}${ICON_CHECK} DNS修复成功${RESET}"
+        echo -e "${GREEN}DNS解析测试: ${success_count}/4 通过${RESET}"
+        
+        echo -e "\n${CYAN}已修改的配置:${RESET}"
+        echo -e "  1. ${WHITE}/etc/systemd/resolved.conf${RESET} - 设置DNS为8.8.8.8, 114.114.114.114, 223.5.5.5, 1.1.1.1"
+        echo -e "  2. ${WHITE}systemd-resolved服务${RESET} - 已重启并启用"
+        echo -e "  3. ${WHITE}/etc/resolv.conf${RESET} - 已重新链接到/run/systemd/resolve/resolv.conf"
+        
+        echo -e "\n${GREEN}备份文件:${RESET}"
+        ls -la /etc/systemd/resolved.conf.bak.* 2>/dev/null || echo "  (无备份文件)"
+        ls -la /etc/resolv.conf.bak.* 2>/dev/null || echo "  (无备份文件)"
+    else
+        echo -e "${YELLOW}${ICON_WARN} DNS修复部分成功${RESET}"
+        echo -e "${YELLOW}DNS解析测试: ${success_count}/4 通过${RESET}"
+        echo -e "\n${YELLOW}建议检查网络连接或手动配置DNS${RESET}"
+    fi
+    
+    echo -e "\n${GREEN}${ICON_CHECK} DNS修复操作完成！${RESET}"
 }
 
 # ===================== 更新检测函数 =====================
@@ -671,7 +814,7 @@ check_for_updates() {
     echo -e "${CYAN}════════════════════════════════════════════${RESET}"
     
     echo -e "${WHITE}当前版本: ${GREEN}${CURRENT_VERSION}${RESET}"
-    echo -e "${WHITE}最后更新: ${GREEN}2025年12月25日${RESET}"
+    echo -e "${WHITE}最后更新: ${GREEN}2025年12月26日${RESET}"
     
     # 检查网络连通性
     if ! test_network_connectivity; then
@@ -858,17 +1001,31 @@ update_script_auto() {
     cp "$0" "$backup_file"
     echo -e "${GREEN}${ICON_CHECK} 当前脚本已备份到: ${backup_file}${RESET}"
     
-    # 下载新版本
+    # 尝试多个下载源
+    local download_urls=(
+        "https://raw.githubusercontent.com/ygbls/a-n-/refs/heads/main/F10.sh"
+        "https://fastly.jsdelivr.net/gh/ygbls/a-n-@main/F10.sh"
+        "https://cdn.jsdelivr.net/gh/ygbls/a-n-@main/F10.sh"
+    )
+    
     local temp_file="/tmp/astr_deploy_new.sh"
+    local download_success=false
     
     # 启动网速监控
     monitor_speed_mb &
     speed_pid=$!
     
-    if timeout 30 curl -s -o "$temp_file" "$SCRIPT_BASE_URL"; then
-        safe_kill "$speed_pid"
-        printf "\r\033[K"  # 清除网速监控行
-        
+    for url in "${download_urls[@]}"; do
+        echo -e "尝试从 ${url##*/} 下载..."
+        if timeout 30 curl -s -o "$temp_file" "$url"; then
+            download_success=true
+            safe_kill "$speed_pid"
+            printf "\r\033[K"  # 清除网速监控行
+            break
+        fi
+    done
+    
+    if [ "$download_success" = true ]; then
         # 检查下载的文件是否有效
         if [ -s "$temp_file" ] && head -n 5 "$temp_file" | grep -q "AstrBot+NapCat 智能部署助手"; then
             # 替换当前脚本
@@ -905,12 +1062,25 @@ show_update_changelog() {
     echo -e "${WHITE}           更新日志${RESET}"
     echo -e "${CYAN}════════════════════════════════════════════${RESET}"
     
-    echo -e "${GREEN}v2.5.5 (2025-12-25)${RESET}"
+    echo -e "${GREEN}v2.5.6 (2025-12-26)${RESET}"
+    echo -e "  • 修复共享目录路径矛盾"
+    echo -e "  • 统一DNS配置为8.8.8.8, 114.114.114.114, 223.5.5.5, 1.1.1.1"
+    echo -e "  • 改进共享目录权限管理（775替代777）"
+    echo -e "  • 优化容器重启策略为always"
+    echo -e "  • 移除重复的警告提示"
+    echo -e "  • 修复更新检测逻辑"
+    
+    echo -e "\n${GREEN}v2.5.4 (2025-12-25)${RESET}"
+    echo -e "  • 添加DNS修复功能到扩展菜单"
+    echo -e "  • 优化DNS配置步骤"
+    echo -e "  • 改进系统兼容性检查"
+    
+    echo -e "\n${GREEN}v2.5.3 (2025-12-25)${RESET}"
     echo -e "  • 增强更新检测错误处理"
     echo -e "  • 优化网速显示功能"
     echo -e "  • 添加多个更新源支持"
     
-    echo -e "\n${GREEN}v2.5.4 (2025-12-25)${RESET}"
+    echo -e "\n${GREEN}v2.5.2 (2025-12-25)${RESET}"
     echo -e "  • 修复共享目录挂载问题"
     echo -e "  • 优化容器状态检查逻辑"
     echo -e "  • 添加扩展功能菜单"
@@ -944,14 +1114,15 @@ show_manual_update_guide() {
     echo -e "   ${GRAY}cp $(basename "$0") $(basename "$0").backup${RESET}"
     echo ""
     echo -e "2. ${CYAN}下载最新版本${RESET}"
-    echo -e "   ${GRAY}wget ${SCRIPT_BASE_URL} -O $(basename "$0").new${RESET}"
+    echo -e "   ${GRAY}wget https://raw.githubusercontent.com/ygbls/a-n-/main/F10.sh${RESET}"
+    echo -e "   ${GRAY}或 wget https://cdn.jsdelivr.net/gh/ygbls/a-n-@main/F10.sh${RESET}"
     echo ""
     echo -e "3. ${CYAN}验证脚本完整性${RESET}"
-    echo -e "   ${GRAY}chmod +x $(basename "$0").new${RESET}"
-    echo -e "   ${GRAY}bash $(basename "$0").new --test${RESET}"
+    echo -e "   ${GRAY}chmod +x F10.sh${RESET}"
+    echo -e "   ${GRAY}bash F10.sh --test${RESET}"
     echo ""
     echo -e "4. ${CYAN}替换旧脚本${RESET}"
-    echo -e "   ${GRAY}mv $(basename "$0").new $(basename "$0")${RESET}"
+    echo -e "   ${GRAY}mv F10.sh $(basename "$0")${RESET}"
     echo ""
     echo -e "5. ${CYAN}重新运行脚本${RESET}"
     echo -e "   ${GRAY}bash $(basename "$0")${RESET}"
@@ -970,9 +1141,9 @@ show_manual_update_guide() {
 print_header() {
     clear
     echo -e "${MAGENTA}════════════════════════════════════════════════════════════════${RESET}"
-    echo -e "${CYAN}  ╔═╗╔═╗╔╦╗╔═╗╦═╗╔╦╗  ╔═╗╔═╗╔╦╗  ${WHITE}智能部署助手 v2.5.5${RESET}"
+    echo -e "${CYAN}  ╔═╗╔═╗╔╦╗╔═╗╦═╗╔╦╗  ╔═╗╔═╗╔╦╗  ${WHITE}智能部署助手 v2.5.6${RESET}"
     echo -e "${CYAN}  ║╣ ║ ║║║║║╣ ╠╦╝ ║   ╠═╝║ ║║║║  ${GRAY}AstrBot + NapCat${RESET}"
-    echo -e "${CYAN}  ╚═╝╚═╝╩ ╩╚═╝╩╚═ ╩   ╩  ╚═╝╩ ╩  ${YELLOW}增强更新检测版${RESET}"
+    echo -e "${CYAN}  ╚═╝╚═╝╩ ╩╚═╝╩╚═ ╩   ╩  ╚═╝╩ ╩  ${YELLOW}修复优化版${RESET}"
     echo -e "${MAGENTA}════════════════════════════════════════════════════════════════${RESET}"
     echo ""
 }
@@ -1025,6 +1196,7 @@ step1() {
             cp /etc/systemd/resolved.conf "$BACKUP_DIR/resolved.conf.bak.$(date +%Y%m%d_%H%M%S)"
         fi
         
+        # 使用统一的DNS配置
         cat > /etc/systemd/resolved.conf << 'EOF'
 [Resolve]
 DNS=8.8.8.8 114.114.114.114 223.5.5.5 1.1.1.1
@@ -1048,34 +1220,52 @@ EOF
     echo -e "\n${GRAY}耗时: ${STEP1_DURATION}秒${RESET}"
 }
 
+# ===================== 第二步：重写的Docker安装/卸载 =====================
 step2() {
     CURRENT_STEP="step2"
     local step_start=$(date +%s)
     
-    if [ "$STEP2_DONE" = true ]; then
-        echo -e "${GREEN}${ICON_CHECK} 第二步已完成${RESET}"
-        return
-    fi
+    # 显示Docker管理菜单
+    echo -e "\n${CYAN}════════════════════════════════════════════${RESET}"
+    echo -e "${WHITE}          Docker 管理菜单${RESET}"
+    echo -e "${CYAN}════════════════════════════════════════════${RESET}"
+    echo -e "${WHITE}  1${RESET} ${GREEN}${ICON_DOCKER} 安装 Docker${RESET}"
+    echo -e "${WHITE}  2${RESET} ${RED}${ICON_CROSS} 卸载 Docker${RESET}"
+    echo -e "${WHITE}  0${RESET} ${GRAY}返回主菜单${RESET}"
+    
+    echo -ne "\n${YELLOW}${ICON_WARN} 请选择操作（0-2）: ${RESET}"
+    read -r docker_choice
+    
+    case "$docker_choice" in
+        1)
+            install_docker
+            ;;
+        2)
+            uninstall_docker
+            ;;
+        0)
+            return
+            ;;
+        *)
+            echo -e "${RED}${ICON_CROSS} 无效选择！${RESET}"
+            sleep 1
+            return
+            ;;
+    esac
+}
+
+install_docker() {
+    local step_start=$(date +%s)
+    
+    print_header
+    echo -e "${BLUE}════════════════════════════════════════════${RESET}"
+    echo -e "${WHITE}          安装 Docker${RESET}"
+    echo -e "${BLUE}════════════════════════════════════════════${RESET}"
     
     # 检查是否已安装Docker
     if command -v docker &>/dev/null; then
-        echo -e "${GREEN}${ICON_CHECK} 检测到Docker已安装，跳过安装步骤${RESET}"
-        
-        # 验证Docker服务状态
-        if systemctl is-active --quiet docker; then
-            echo -e "${GREEN}${ICON_CHECK} Docker服务正在运行${RESET}"
-        else
-            echo -e "${YELLOW}${ICON_WARN} Docker服务未运行，正在启动...${RESET}"
-            if systemctl start docker; then
-                echo -e "${GREEN}${ICON_CHECK} Docker服务启动成功${RESET}"
-            else
-                echo -e "${RED}${ICON_CROSS} Docker服务启动失败${RESET}"
-                return 1
-            fi
-        fi
-        
+        echo -e "${GREEN}${ICON_CHECK} 检测到Docker已安装，版本: $(docker --version | cut -d' ' -f3)${RESET}"
         STEP2_DONE=true
-        STEP2_DURATION=1
         return
     fi
     
@@ -1083,60 +1273,432 @@ step2() {
         return
     fi
     
-    print_header
-    echo -e "${BLUE}════════════════════════════════════════════${RESET}"
-    echo -e "${WHITE}          第二步：安装Docker${RESET}"
-    echo -e "${BLUE}════════════════════════════════════════════${RESET}"
-    
     echo -e "${CYAN}${ICON_LOAD} 开始安装Docker...${RESET}"
     
-    # 启动网速监控（仅显示下载速度）
-    echo -e "\n${CYAN}${ICON_NETWORK} 下载速度监控（M/s）${RESET}"
+    # ===================== 步骤1: 清理旧的/错误的Docker源配置 =====================
+    echo -e "\n${CYAN}[1/15] 清理旧的Docker源配置...${RESET}"
+    local clean_log="/tmp/docker_clean.log"
+    echo "=== 清理旧的Docker源配置 $(date) ===" >> "$clean_log"
+    
+    # 删除可能错误的Docker源文件
+    rm -f /etc/apt/sources.list.d/docker.list
+    echo -e "${GREEN}${ICON_CHECK} 已清理旧的Docker源文件${RESET}"
+    
+    # 更新apt缓存（清空旧的源信息）
+    monitor_speed_mb &
+    speed_pid=$!
+    if apt-get update -y 2>&1 | tee -a "$clean_log"; then
+        safe_kill "$speed_pid"
+        printf "\r\033[K"
+        echo -e "${GREEN}${ICON_CHECK} apt缓存已更新${RESET}"
+    else
+        safe_kill "$speed_pid"
+        printf "\r\033[K"
+        echo -e "${YELLOW}${ICON_WARN} apt缓存更新遇到错误${RESET}"
+    fi
+    show_progress 1 15
+    
+    # ===================== 步骤2: 修改系统镜像源 =====================
+    echo -e "\n${CYAN}[2/15] 修改系统镜像源...${RESET}"
+    local sources_log="/tmp/docker_sources.log"
+    echo "=== 修改系统镜像源 $(date) ===" >> "$sources_log"
+    
+    # 备份原始镜像源
+    cp /etc/apt/sources.list /etc/apt/sources.list.bak.$(date +%Y%m%d_%H%M%S)
+    
+    cat > /etc/apt/sources.list << 'EOF'
+deb http://mirrors.aliyun.com/ubuntu-old-releases/ubuntu/ hirsute main restricted universe multiverse
+deb http://mirrors.aliyun.com/ubuntu-old-releases/ubuntu/ hirsute-updates main restricted universe multiverse
+deb http://mirrors.aliyun.com/ubuntu-old-releases/ubuntu/ hirsute-backports main restricted universe multiverse
+deb http://mirrors.aliyun.com/ubuntu-old-releases/ubuntu/ hirsute-security main restricted universe multiverse
+deb http://mirrors.aliyun.com/ubuntu-old-releases/ubuntu/ hirsute main restricted universe multiverse
+deb http://mirrors.aliyun.com/ubuntu-old-releases/ubuntu/ hirsute-updates main restricted universe multiverse
+deb http://mirrors.aliyun.com/ubuntu-old-releases/ubuntu/ hirsute-backports main restricted universe multiverse
+deb http://mirrors.aliyun.com/ubuntu-old-releases/ubuntu/ hirsute-security main restricted universe multiverse
+
+deb http://mirrors.aliyun.com/ubuntu/ noble main restricted universe multiverse
+deb-src http://mirrors.aliyun.com/ubuntu/ noble main restricted universe multiverse
+
+deb http://mirrors.aliyun.com/ubuntu/ noble-security main restricted universe multiverse
+deb-src http://mirrors.aliyun.com/ubuntu/ noble-security main restricted universe multiverse
+
+deb http://mirrors.aliyun.com/ubuntu/ noble-updates main restricted universe multiverse
+deb-src http://mirrors.aliyun.com/ubuntu/ noble-updates main restricted universe multiverse
+
+deb http://mirrors.aliyun.com/ubuntu/ noble-backports main restricted universe multiverse
+deb-src http://mirrors.aliyun.com/ubuntu/ noble-backports main restricted universe multiverse
+EOF
+    
+    echo -e "${GREEN}${ICON_CHECK} 系统镜像源已修改为阿里云${RESET}"
+    show_progress 2 15
+    
+    # ===================== 步骤3: 安装依赖工具 =====================
+    echo -e "\n${CYAN}[3/15] 安装依赖工具...${RESET}"
+    local deps_log="/tmp/docker_deps_install.log"
+    echo "=== 安装依赖工具 $(date) ===" >> "$deps_log"
+    
+    if apt-get install -y ca-certificates curl gnupg lsb-release 2>&1 | tee "$deps_log"; then
+        echo -e "${GREEN}${ICON_CHECK} 依赖工具安装完成${RESET}"
+    else
+        echo -e "${YELLOW}${ICON_WARN} 依赖工具安装遇到错误${RESET}"
+    fi
+    show_progress 3 15
+    
+    # 询问是否继续
+    if ! confirm_action "继续安装Docker？"; then
+        echo -e "${YELLOW}安装已取消${RESET}"
+        return
+    fi
+    
+    # ===================== 步骤4: 添加Docker官方GPG密钥 =====================
+    echo -e "\n${CYAN}[4/15] 添加Docker官方GPG密钥...${RESET}"
+    local gpg_log="/tmp/docker_gpg.log"
+    echo "=== 添加Docker官方GPG密钥 $(date) ===" >> "$gpg_log"
+    
+    # 创建密钥存储目录
+    mkdir -p /etc/apt/trusted.gpg.d
+    mkdir -p /etc/apt/keyrings
+    
+    # 下载并导入Docker官方GPG密钥
+    if curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/trusted.gpg.d/docker.gpg 2>&1 | tee "$gpg_log"; then
+        echo -e "${GREEN}${ICON_CHECK} Docker官方GPG密钥添加成功${RESET}"
+    else
+        echo -e "${YELLOW}${ICON_WARN} GPG密钥添加遇到问题，尝试备用方法...${RESET}"
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+        apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 7EA0A9C3F273FCD8 2>&1 | tee -a "$gpg_log"
+    fi
+    show_progress 4 15
+    
+    # ===================== 步骤5: 添加Docker官方源 =====================
+    echo -e "\n${CYAN}[5/15] 添加Docker官方源...${RESET}"
+    local repo_log="/tmp/docker_repo.log"
+    echo "=== 添加Docker官方源 $(date) ===" >> "$repo_log"
+    
+    # 生成正确的源配置（适配当前系统版本）
+    local codename=$(lsb_release -cs)
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/trusted.gpg.d/docker.gpg] https://download.docker.com/linux/ubuntu $codename stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+    
+    echo -e "${GREEN}${ICON_CHECK} Docker官方源添加完成${RESET}"
+    echo -e "${GRAY}系统版本: $codename${RESET}"
+    show_progress 5 15
+    
+    # ===================== 步骤6: 修正Docker源签名配置 =====================
+    echo -e "\n${CYAN}[6/15] 修正Docker源签名配置...${RESET}"
+    local fix_log="/tmp/docker_fix.log"
+    echo "=== 修正Docker源签名配置 $(date) ===" >> "$fix_log"
+    
+    local docker_list_file="/etc/apt/sources.list.d/docker.list"
+    if [ -f "$docker_list_file" ]; then
+        # 确保签名配置正确
+        sed -i 's|signed-by=/usr/share/keyrings/docker-archive-keyring.gpg|signed-by=/etc/apt/trusted.gpg.d/docker.gpg|' "$docker_list_file"
+        echo -e "${GREEN}${ICON_CHECK} Docker源签名配置修正完成${RESET}"
+    else
+        echo -e "${YELLOW}${ICON_WARN} Docker源文件不存在${RESET}"
+    fi
+    show_progress 6 15
+    
+    # ===================== 步骤7: 更新apt包索引 =====================
+    echo -e "\n${CYAN}[7/15] 更新apt包索引...${RESET}"
+    echo "=== 更新apt包索引 $(date) ===" >> "$repo_log"
     monitor_speed_mb &
     speed_pid=$!
     
-    echo -e "${CYAN}${ICON_LOAD} 更新软件源...${RESET}"
-    apt-get update -y >/dev/null 2>&1
-    
-    echo -e "${CYAN}${ICON_LOAD} 安装依赖...${RESET}"
-    apt-get install -y apt-transport-https ca-certificates curl software-properties-common gnupg lsb-release >/dev/null 2>&1
-    
-    echo -e "${CYAN}${ICON_LOAD} 添加Docker仓库...${RESET}"
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg 2>/dev/null
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list >/dev/null 2>&1
-    
-    echo -e "${CYAN}${ICON_LOAD} 安装Docker引擎...${RESET}"
-    apt-get update -y >/dev/null 2>&1
-    
-    if apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin; then
+    if apt-get update -y 2>&1 | tee -a "$repo_log"; then
         safe_kill "$speed_pid"
-        printf "\r\033[K"  # 清除网速监控行
-        
-        echo -e "${GREEN}${ICON_CHECK} Docker安装完成${RESET}"
-        
-        # 配置Docker
-        mkdir -p /etc/docker
-        cat > /etc/docker/daemon.json << 'EOF'
-{
-  "registry-mirrors": ["https://registry.docker-cn.com", "https://mirror.baidubce.com", "https://hub-mirror.c.163.com"],
-  "log-driver": "json-file",
-  "log-opts": {"max-size": "100m", "max-file": "3"}
-}
-EOF
-        
-        systemctl daemon-reload
-        systemctl restart docker
-        systemctl enable docker >/dev/null 2>&1
+        printf "\r\033[K"
+        echo -e "${GREEN}${ICON_CHECK} apt包索引更新完成${RESET}"
     else
         safe_kill "$speed_pid"
-        printf "\r\033[K"  # 清除网速监控行
-        echo -e "${RED}${ICON_CROSS} Docker安装失败${RESET}"
+        printf "\r\033[K"
+        echo -e "${YELLOW}${ICON_WARN} apt包索引更新遇到错误${RESET}"
+    fi
+    show_progress 7 15
+    
+    # ===================== 步骤8: 安装Docker组件 =====================
+    echo -e "\n${CYAN}[8/15] 安装Docker组件...${RESET}"
+    echo "=== 安装Docker组件 $(date) ===" >> "$repo_log"
+    echo -e "${CYAN}${ICON_NETWORK} Docker组件下载速度（M/s）${RESET}"
+    monitor_speed_mb &
+    speed_pid=$!
+    
+    local install_log="/tmp/docker_install.log"
+    if apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin 2>&1 | tee "$install_log"; then
+        safe_kill "$speed_pid"
+        printf "\r\033[K"
+        echo -e "${GREEN}${ICON_CHECK} Docker组件安装完成${RESET}"
+    else
+        safe_kill "$speed_pid"
+        printf "\r\033[K"
+        echo -e "${RED}${ICON_CROSS} Docker组件安装失败！${RESET}"
+        echo -e "${YELLOW}查看日志: $install_log${RESET}"
         return 1
     fi
+    show_progress 8 15
     
+    # ===================== 步骤9: 配置Docker镜像源 =====================
+    echo -e "\n${CYAN}[9/15] 配置Docker镜像源...${RESET}"
+    local mirror_log="/tmp/docker_mirror.log"
+    echo "=== 配置Docker镜像源 $(date) ===" >> "$mirror_log"
+    
+    # 创建目录
+    mkdir -p /etc/docker
+    
+    # 备份现有配置文件
+    if [ -f "/etc/docker/daemon.json" ]; then
+        cp /etc/docker/daemon.json /etc/docker/daemon.json.bak.$(date +%Y%m%d_%H%M%S)
+    fi
+    
+    # 创建新的配置文件
+    cat > /etc/docker/daemon.json << 'EOF'
+{
+  "registry-mirrors": [
+    "https://registry.cn-hangzhou.aliyuncs.com",
+    "https://mirror.ccs.tencentyun.com",
+    "https://registry.docker-cn.com",
+    "https://mirror.baidubce.com",
+    "https://hub-mirror.c.163.com",
+    "https://hub.fast360.xyz",
+    "https://hub.rat.dev",
+    "https://docker-0.unsee.tech",
+    "https://docker.mirrors.ustc.edu.cn",
+    "https://docker.hlmirror.com",
+    "https://docker.m.daocloud.io",
+    "https://docker.1ms.run",
+    "https://image.cloudlayer.icu"
+  ]
+}
+EOF
+    
+    echo -e "${GREEN}${ICON_CHECK} Docker镜像源配置完成${RESET}"
+    echo -e "${GRAY}镜像源数量: $(grep -c "https://" /etc/docker/daemon.json) 个${RESET}"
+    show_progress 9 15
+    
+    # ===================== 步骤10: 启动Docker服务 =====================
+    echo -e "\n${CYAN}[10/15] 启动Docker服务...${RESET}"
+    local service_log="/tmp/docker_service.log"
+    if systemctl start docker 2>&1 | tee "$service_log"; then
+        echo -e "${GREEN}${ICON_CHECK} Docker服务启动成功${RESET}"
+    else
+        echo -e "${RED}${ICON_CROSS} Docker服务启动失败${RESET}"
+        echo -e "${YELLOW}查看日志: $service_log${RESET}"
+        return 1
+    fi
+    show_progress 10 15
+    
+    # ===================== 步骤11: 设置开机自启 =====================
+    echo -e "\n${CYAN}[11/15] 设置Docker开机自启...${RESET}"
+    if systemctl enable docker 2>&1 | tee -a "$service_log"; then
+        echo -e "${GREEN}${ICON_CHECK} Docker开机自启设置成功${RESET}"
+    else
+        echo -e "${YELLOW}${ICON_WARN} Docker开机自启设置失败${RESET}"
+    fi
+    show_progress 11 15
+    
+    # ===================== 步骤12: 重启Docker服务 =====================
+    echo -e "\n${CYAN}[12/15] 重启Docker服务应用配置...${RESET}"
+    if systemctl restart docker 2>&1 | tee -a "$service_log"; then
+        echo -e "${GREEN}${ICON_CHECK} Docker服务重启成功${RESET}"
+    else
+        echo -e "${YELLOW}${ICON_WARN} Docker服务重启失败${RESET}"
+    fi
+    show_progress 12 15
+    
+    # ===================== 步骤13: 测试Docker安装 =====================
+    echo -e "\n${CYAN}[13/15] 测试Docker安装...${RESET}"
+    local test_log="/tmp/docker_test.log"
+    local test_output=$(docker run --rm hello-world 2>&1)
+    echo "$test_output" | tee "$test_log"
+    
+    if echo "$test_output" | grep -q "Hello from Docker"; then
+        echo -e "${GREEN}${ICON_CHECK} Docker测试成功！${RESET}"
+    else
+        echo -e "${YELLOW}${ICON_WARN} Docker测试输出异常${RESET}"
+    fi
+    show_progress 13 15
+    
+    # ===================== 步骤14: 验证安装 =====================
+    echo -e "\n${CYAN}[14/15] 验证Docker安装...${RESET}"
+    local docker_version=$(docker --version 2>/dev/null || echo "未知")
+    local compose_version=$(docker compose version 2>/dev/null || echo "未知")
+    
+    echo -e "${GREEN}${ICON_CHECK} Docker版本: ${WHITE}${docker_version}${RESET}"
+    echo -e "${GREEN}${ICON_CHECK} Docker Compose版本: ${WHITE}${compose_version}${RESET}"
+    
+    if systemctl is-active --quiet docker; then
+        echo -e "${GREEN}${ICON_CHECK} Docker服务运行状态: ${WHITE}运行中${RESET}"
+    else
+        echo -e "${RED}${ICON_CROSS} Docker服务运行状态: ${WHITE}未运行${RESET}"
+    fi
+    show_progress 14 15
+    
+    # ===================== 步骤15: 清理和总结 =====================
+    echo -e "\n${CYAN}[15/15] 清理和总结...${RESET}"
     STEP2_DONE=true
     STEP2_DURATION=$(( $(date +%s) - step_start ))
-    echo -e "\n${GRAY}耗时: ${STEP2_DURATION}秒${RESET}"
+    
+    echo -e "\n${GREEN}════════════════════════════════════════════${RESET}"
+    echo -e "${WHITE}          Docker安装完成！${RESET}"
+    echo -e "${GREEN}════════════════════════════════════════════${RESET}"
+    echo -e "${WHITE}安装日志: ${GRAY}/tmp/docker_*.log${RESET}"
+    echo -e "${WHITE}耗时: ${GREEN}${STEP2_DURATION}秒${RESET}"
+    echo -e "${WHITE}原始apt源备份: ${GRAY}/etc/apt/sources.list.bak.*${RESET}"
+    echo -e "\n${GREEN}按任意键继续...${RESET}"
+    read -p ""
+}
+
+uninstall_docker() {
+    print_header
+    echo -e "${RED}════════════════════════════════════════════${RESET}"
+    echo -e "${WHITE}          卸载 Docker${RESET}"
+    echo -e "${RED}════════════════════════════════════════════${RESET}"
+    
+    if ! confirm_action "卸载Docker及相关组件，此操作不可逆！"; then
+        return
+    fi
+    
+    echo -e "${CYAN}${ICON_LOAD} 开始卸载Docker...${RESET}"
+    
+    # 停止Docker服务
+    echo -e "\n${CYAN}[1/5] 停止Docker服务...${RESET}"
+    systemctl stop docker 2>/dev/null
+    systemctl stop docker.socket 2>/dev/null
+    echo -e "${GREEN}${ICON_CHECK} Docker服务已停止${RESET}"
+    show_progress 1 5
+    
+    # 卸载Docker包
+    echo -e "\n${CYAN}[2/5] 卸载Docker软件包...${RESET}"
+    local uninstall_log="/tmp/docker_uninstall.log"
+    local uninstall_output=$(apt-get purge -y \
+        docker-ce \
+        docker-ce-cli \
+        containerd.io \
+        docker-compose-plugin \
+        docker-ce-rootless-extras \
+        docker.io \
+        docker-compose 2>&1 | tee "$uninstall_log")
+    
+    echo "$uninstall_output" | tail -10
+    echo -e "${GREEN}${ICON_CHECK} Docker软件包已卸载${RESET}"
+    show_progress 2 5
+    
+    # 删除Docker相关文件
+    echo -e "\n${CYAN}[3/5] 删除Docker相关文件...${RESET}"
+    rm -rf /var/lib/docker
+    rm -rf /var/lib/containerd
+    rm -rf /etc/docker
+    rm -rf /etc/apt/keyrings/docker.gpg
+    rm -rf /etc/apt/trusted.gpg.d/docker.gpg
+    rm -f /etc/apt/sources.list.d/docker.list
+    echo -e "${GREEN}${ICON_CHECK} Docker相关文件已删除${RESET}"
+    show_progress 3 5
+    
+    # 清理未使用的依赖
+    echo -e "\n${CYAN}[4/5] 清理未使用的依赖...${RESET}"
+    apt-get autoremove -y 2>&1 | tee -a "$uninstall_log"
+    echo -e "${GREEN}${ICON_CHECK} 依赖清理完成${RESET}"
+    show_progress 4 5
+    
+    # 验证卸载
+    echo -e "\n${CYAN}[5/5] 验证卸载结果...${RESET}"
+    if command -v docker &>/dev/null; then
+        echo -e "${RED}${ICON_CROSS} Docker卸载不彻底！${RESET}"
+    else
+        echo -e "${GREEN}${ICON_CHECK} Docker已成功卸载${RESET}"
+        STEP2_DONE=false
+    fi
+    
+    if [ -d "/var/lib/docker" ]; then
+        echo -e "${YELLOW}${ICON_WARN} /var/lib/docker 目录仍然存在${RESET}"
+    else
+        echo -e "${GREEN}${ICON_CHECK} /var/lib/docker 目录已删除${RESET}"
+    fi
+    
+    show_progress 5 5
+    
+    echo -e "\n${GREEN}════════════════════════════════════════════${RESET}"
+    echo -e "${WHITE}          Docker卸载完成！${RESET}"
+    echo -e "${GREEN}════════════════════════════════════════════${RESET}"
+    echo -e "${WHITE}卸载日志: ${GRAY}$uninstall_log${RESET}"
+    echo -e "\n${GREEN}按任意键继续...${RESET}"
+    read -p ""
+}
+# ===================== 镜像源检测函数 =====================
+detect_fastest_mirror() {
+    local image_name="$1"
+    local original_image="$2"
+    local mirrors=()
+    
+    echo -e "${CYAN}${ICON_SEARCH} 检测最快的Docker镜像源...${RESET}"
+    
+    # 定义镜像源列表
+    if [[ "$image_name" == "astrbot" ]]; then
+        mirrors=(
+            "docker.io/soulter/astrbot:latest"
+            "registry.cn-hangzhou.aliyuncs.com/soulter/astrbot:latest"
+            "registry.cn-shanghai.aliyuncs.com/soulter/astrbot:latest"
+            "registry.cn-beijing.aliyuncs.com/soulter/astrbot:latest"
+            "mirror.ccs.tencentyun.com/soulter/astrbot:latest"
+            "hub-mirror.c.163.com/soulter/astrbot:latest"
+        )
+    elif [[ "$image_name" == "napcat" ]]; then
+        mirrors=(
+            "docker.io/mlikiowa/napcat-docker:latest"
+            "registry.cn-hangzhou.aliyuncs.com/mlikiowa/napcat-docker:latest"
+            "registry.cn-shanghai.aliyuncs.com/mlikiowa/napcat-docker:latest"
+            "registry.cn-beijing.aliyuncs.com/mlikiowa/napcat-docker:latest"
+            "mirror.ccs.tencentyun.com/mlikiowa/napcat-docker:latest"
+            "hub-mirror.c.163.com/mlikiowa/napcat-docker:latest"
+        )
+    else
+        echo -e "${YELLOW}${ICON_WARN} 未知的镜像类型，使用默认镜像源${RESET}"
+        echo "$original_image"
+        return
+    fi
+    
+    local fastest_mirror=""
+    local fastest_time=999999
+    local total_mirrors=${#mirrors[@]}
+    local current=1
+    
+    echo -e "${CYAN}测试 ${total_mirrors} 个镜像源，请稍候...${RESET}"
+    
+    # 测试每个镜像源的速度
+    for mirror in "${mirrors[@]}"; do
+        echo -ne "\r${CYAN}[${current}/${total_mirrors}] 测试 ${mirror}${RESET}"
+        
+        # 使用timeout限制测试时间，最多30秒
+        local start_time=$(date +%s%N)
+        
+        # 尝试拉取镜像的第一个layer（小数据量测试）
+        if timeout 30 docker pull "$mirror" --disable-content-trust >/dev/null 2>&1; then
+            local end_time=$(date +%s%N)
+            local duration=$(( (end_time - start_time) / 1000000 ))  # 转换为毫秒
+            
+            # 计算速度（毫秒越小越快）
+            if [ $duration -lt $fastest_time ]; then
+                fastest_time=$duration
+                fastest_mirror="$mirror"
+                echo -ne " ${GREEN}${duration}ms${RESET}"
+            else
+                echo -ne " ${YELLOW}${duration}ms${RESET}"
+            fi
+        else
+            echo -ne " ${RED}失败${RESET}"
+        fi
+        
+        ((current++))
+        sleep 1  # 避免请求太密集
+    done
+    
+    echo -e "\n"
+    
+    if [ -n "$fastest_mirror" ]; then
+        echo -e "${GREEN}${ICON_CHECK} 最快的镜像源: ${fastest_mirror} (${fastest_time}ms)${RESET}"
+        echo "$fastest_mirror"
+    else
+        echo -e "${YELLOW}${ICON_WARN} 所有镜像源测试失败，使用默认镜像源${RESET}"
+        echo "$original_image"
+    fi
 }
 
 step3() {
@@ -1171,8 +1733,8 @@ step3() {
             if docker inspect astrbot 2>/dev/null | grep -q "\"Source\": \"$SHARED_DIR\""; then
                 echo -e "${GREEN}${ICON_CHECK} 共享目录已挂载${RESET}"
             else
-                echo -e "${RED}${ICON_CROSS} 警告：共享目录未挂载【多试几遍，若多次确认未挂载则去扩展功能执行修复】！${RESET}"
-                echo -e "${YELLOW}建议重新部署以启用共享文件夹功能${RESET}"
+                echo -e "${YELLOW}${ICON_WARN} 警告：共享目录未挂载！${RESET}"
+                echo -e "${YELLOW}建议运行扩展功能中的修复工具${RESET}"
             fi
             
             check_container_status "astrbot"
@@ -1222,19 +1784,17 @@ step3() {
     fi
     
     echo -e "${CYAN}${ICON_LOAD} 启动AstrBot容器...${RESET}"
-    if docker run -itd \
+    if docker run -d \
         -p 6180-6200:6180-6200 \
         -p 11451:11451 \
         -v "$SHARED_DIR:$ASTROBOT_SHARED_PATH" \
         -v "$(pwd)/astrbot/data:/AstrBot/data" \
         -v /etc/localtime:/etc/localtime:ro \
         --name astrbot \
-        --restart=unless-stopped \
+        --restart=always \
         soulter/astrbot:latest; then
         
         echo -e "${GREEN}${ICON_CHECK} AstrBot启动成功${RESET}"
-        
-        docker update --restart=always astrbot >/dev/null 2>&1
         sleep 3
         
         check_container_status "astrbot"
@@ -1286,8 +1846,8 @@ step4() {
             if docker inspect napcat 2>/dev/null | grep -q "\"Source\": \"$SHARED_DIR\""; then
                 echo -e "${GREEN}${ICON_CHECK} 共享目录已挂载${RESET}"
             else
-                echo -e "${RED}${ICON_CROSS} 警告：共享目录未挂载【多试几遍，若多次确认未挂载则去扩展功能执行修复】！${RESET}"
-                echo -e "${YELLOW}建议重新部署以启用共享文件夹功能${RESET}"
+                echo -e "${YELLOW}${ICON_WARN} 警告：共享目录未挂载！${RESET}"
+                echo -e "${YELLOW}建议运行扩展功能中的修复工具${RESET}"
             fi
             
             check_container_status "napcat"
@@ -1443,11 +2003,12 @@ show_extended_menu() {
         echo -e "${WHITE}  8${RESET} ${RED}${ICON_WARN} 修复共享目录挂载${RESET}"
         echo -e "${WHITE}  9${RESET} ${CYAN}${ICON_LINK} 提取日志URL${RESET}"
         echo -e "${WHITE} 10${RESET} ${GREEN}${ICON_UPDATE} 检测更新${RESET}"
+        echo -e "${WHITE} 11${RESET} ${BLUE}${ICON_DNS} DNS修复功能${RESET}"
         echo -e "${WHITE}  0${RESET} ${GRAY}返回主菜单${RESET}"
         
         print_footer
         
-        echo -ne "${YELLOW}${ICON_WARN} 请选择功能（0-10）: ${RESET}"
+        echo -ne "${YELLOW}${ICON_WARN} 请选择功能（0-11）: ${RESET}"
         read -r choice
         
         case "$choice" in
@@ -1553,6 +2114,12 @@ show_extended_menu() {
                 print_header
                 check_for_updates
                 ;;
+            11)
+                print_header
+                fix_dns_configuration
+                echo -e "\n${GREEN}按任意键继续...${RESET}"
+                read -p ""
+                ;;
             0)
                 return
                 ;;
@@ -1593,8 +2160,9 @@ show_main_menu() {
 init_script() {
     echo -e "${MAGENTA}"
     echo "╔══════════════════════════════════════════════════════════╗"
-    echo "║              智能部署助手 v2.5.5 初始化                 ║"
-    echo "║          增强更新检测，优化网速显示                     ║"
+    echo "║              智能部署助手 v2.5.6 初始化                 ║"
+    echo "║          修复共享目录矛盾，统一DNS配置                   ║"
+    echo "║          优化权限管理，改进更新检测                     ║"
     echo "║          本脚本完全免费，严禁倒卖！                     ║"
     echo "║          技术支持QQ: 3076737056                         ║"
     echo "╚══════════════════════════════════════════════════════════╝"
