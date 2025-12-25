@@ -1,7 +1,7 @@
 #!/bin/bash
 # ===================== 版本信息 =====================
 # 脚本名称: AstrBot+NapCat 智能部署助手
-# 版本号: v2.5.3
+# 版本号: v2.5.2
 # 最后更新: 2025年12月25日
 # 功能: 修复共享目录挂载问题
 # 声明: 本脚本完全免费，禁止倒卖！
@@ -24,6 +24,11 @@ REQUIRED_DOCKER_VERSION="20.10"
 SHARED_DIR="/opt/astrbot/shared"
 ASTROBOT_SHARED_PATH="/app/sharedFolder"
 NAPCAT_SHARED_PATH="/app/sharedFolder"
+
+# 更新配置
+UPDATE_CHECK_URL="https://raw.githubusercontent.com/ygbls/a-n-/blob/main/README.md"
+SCRIPT_BASE_URL="https://raw.githubusercontent.com/ygbls/a-n-/blob/main/F10.sh"
+CURRENT_VERSION="v2.5.2"
 
 # ===================== 颜色定义 =====================
 RED='\033[1;31m'
@@ -61,6 +66,8 @@ ICON_TIME="⏱"
 ICON_CPU="🖥"
 ICON_RAM="💾"
 ICON_DISK="💿"
+ICON_UPDATE="🔄"
+ICON_DOWNLOAD="⬇"
 
 # ===================== 全局变量定义 =====================
 STEP1_DONE=false
@@ -658,6 +665,224 @@ fix_shared_mount() {
     echo -e "备份文件保存在: /tmp/container_backup_$(date +%Y%m%d)/"
 }
 
+# ===================== 更新检测函数 =====================
+check_for_updates() {
+    echo -e "\n${CYAN}${ICON_UPDATE} 检查脚本更新${RESET}"
+    echo -e "${CYAN}════════════════════════════════════════════${RESET}"
+    
+    echo -e "${WHITE}当前版本: ${GREEN}${CURRENT_VERSION}${RESET}"
+    echo -e "${WHITE}最后更新: ${GREEN}2025年12月25日${RESET}"
+    
+    # 检查网络连通性
+    if ! test_network_connectivity; then
+        echo -e "${YELLOW}${ICON_WARN} 网络连接异常，无法检查更新${RESET}"
+        return 1
+    fi
+    
+    echo -e "${CYAN}${ICON_LOAD} 正在检查更新...${RESET}"
+    
+    # 尝试从多个源获取版本信息
+    local remote_version=""
+    local update_urls=(
+        "https://raw.githubusercontent.com/your-repo/astrbot-deploy/main/version.txt"
+        "https://gist.githubusercontent.com/your-gist/version/raw/version.txt"
+        "https://pastebin.com/raw/xxxxxxxx"
+    )
+    
+    for url in "${update_urls[@]}"; do
+        echo -ne "尝试从源获取... "
+        remote_version=$(timeout 10 curl -s "$url" 2>/dev/null | head -n1 | tr -d '\n' | tr -d '\r')
+        if [ -n "$remote_version" ] && [[ "$remote_version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+            echo -e "${GREEN}成功${RESET}"
+            break
+        else
+            echo -e "${RED}失败${RESET}"
+            remote_version=""
+        fi
+    done
+    
+    if [ -z "$remote_version" ]; then
+        echo -e "${YELLOW}${ICON_WARN} 无法获取远程版本信息${RESET}"
+        echo -e "${GRAY}可能原因:${RESET}"
+        echo -e "  1. 网络连接问题"
+        echo -e "  2. 更新服务器暂时不可用"
+        echo -e "  3. 版本文件格式不正确"
+        return 1
+    fi
+    
+    echo -e "${WHITE}最新版本: ${GREEN}${remote_version}${RESET}"
+    
+    # 比较版本号
+    local current_num=$(echo "$CURRENT_VERSION" | sed 's/v//' | sed 's/\./ /g')
+    local remote_num=$(echo "$remote_version" | sed 's/v//' | sed 's/\./ /g')
+    
+    local current_array=($current_num)
+    local remote_array=($remote_num)
+    
+    local update_needed=false
+    
+    for i in {0..2}; do
+        if [ "${remote_array[i]}" -gt "${current_array[i]}" ]; then
+            update_needed=true
+            break
+        elif [ "${remote_array[i]}" -lt "${current_array[i]}" ]; then
+            break
+        fi
+    done
+    
+    if [ "$update_needed" = true ]; then
+        echo -e "\n${GREEN}${ICON_UPDATE} 发现新版本 ${remote_version}！${RESET}"
+        echo -e "${YELLOW}更新内容可能包含:${RESET}"
+        echo -e "  • 修复已知问题"
+        echo -e "  • 优化部署流程"
+        echo -e "  • 新增功能特性"
+        
+        echo -e "\n${CYAN}════════════════════════════════════════════${RESET}"
+        echo -e "${WHITE}           更新选项${RESET}"
+        echo -e "${CYAN}════════════════════════════════════════════${RESET}"
+        
+        echo -e "${WHITE}  1${RESET} ${GREEN}立即更新脚本${RESET}"
+        echo -e "${WHITE}  2${RESET} ${CYAN}查看更新日志${RESET}"
+        echo -e "${WHITE}  3${RESET} ${YELLOW}手动更新（推荐）${RESET}"
+        echo -e "${WHITE}  0${RESET} ${GRAY}暂不更新${RESET}"
+        
+        echo -ne "\n${YELLOW}请选择操作（0-3）: ${RESET}"
+        read -r update_choice
+        
+        case "$update_choice" in
+            1)
+                update_script_auto
+                ;;
+            2)
+                show_update_changelog
+                ;;
+            3)
+                show_manual_update_guide
+                ;;
+            0)
+                echo -e "${GRAY}已取消更新${RESET}"
+                ;;
+            *)
+                echo -e "${RED}无效选择${RESET}"
+                ;;
+        esac
+    else
+        echo -e "\n${GREEN}${ICON_CHECK} 当前已是最新版本！${RESET}"
+        echo -e "${GRAY}无需更新，继续使用当前版本即可${RESET}"
+    fi
+    
+    echo -e "\n${GREEN}按任意键继续...${RESET}"
+    read -p ""
+}
+
+update_script_auto() {
+    echo -e "\n${YELLOW}${ICON_WARN} 警告：自动更新将覆盖当前脚本${RESET}"
+    echo -e "${GRAY}建议先备份当前脚本${RESET}"
+    
+    if ! confirm_action "自动更新脚本到 ${remote_version}"; then
+        return
+    fi
+    
+    echo -e "${CYAN}${ICON_DOWNLOAD} 正在下载新版本...${RESET}"
+    
+    # 备份当前脚本
+    local backup_file="/tmp/astr_deploy_backup_$(date +%Y%m%d_%H%M%S).sh"
+    cp "$0" "$backup_file"
+    echo -e "${GREEN}${ICON_CHECK} 当前脚本已备份到: ${backup_file}${RESET}"
+    
+    # 下载新版本
+    local temp_file="/tmp/astr_deploy_new.sh"
+    if timeout 30 curl -s -o "$temp_file" "$SCRIPT_BASE_URL"; then
+        # 检查下载的文件是否有效
+        if [ -s "$temp_file" ] && head -n 5 "$temp_file" | grep -q "AstrBot+NapCat 智能部署助手"; then
+            # 替换当前脚本
+            chmod +x "$temp_file"
+            cp "$temp_file" "$0"
+            
+            echo -e "${GREEN}${ICON_CHECK} 脚本更新成功！${RESET}"
+            echo -e "${YELLOW}${ICON_WARN} 需要重新运行脚本以应用更新${RESET}"
+            
+            if confirm_action "立即重启脚本"; then
+                echo -e "${GREEN}正在重启脚本...${RESET}"
+                exec bash "$0"
+            else
+                echo -e "${GRAY}下次运行脚本时将使用新版本${RESET}"
+            fi
+        else
+            echo -e "${RED}${ICON_CROSS} 下载的文件无效，更新失败${RESET}"
+            echo -e "${YELLOW}正在恢复备份...${RESET}"
+            cp "$backup_file" "$0"
+        fi
+    else
+        echo -e "${RED}${ICON_CROSS} 下载失败，请检查网络连接${RESET}"
+        echo -e "${YELLOW}${ICON_WARN} 更新已取消，脚本未更改${RESET}"
+    fi
+    
+    # 清理临时文件
+    rm -f "$temp_file"
+}
+
+show_update_changelog() {
+    echo -e "\n${CYAN}════════════════════════════════════════════${RESET}"
+    echo -e "${WHITE}           更新日志${RESET}"
+    echo -e "${CYAN}════════════════════════════════════════════${RESET}"
+    
+    echo -e "${GREEN}v2.5.2 (2025-12-25)${RESET}"
+    echo -e "  • 修复共享目录挂载问题"
+    echo -e "  • 优化容器状态检查逻辑"
+    echo -e "  • 添加扩展功能菜单"
+    
+    echo -e "\n${GREEN}v2.5.1 (2025-12-20)${RESET}"
+    echo -e "  • 添加DNS优化配置"
+    echo -e "  • 改进网络检测功能"
+    echo -e "  • 修复Docker安装问题"
+    
+    echo -e "\n${GREEN}v2.5.0 (2025-12-15)${RESET}"
+    echo -e "  • 初始版本发布"
+    echo -e "  • 支持AstrBot和NapCat部署"
+    echo -e "  • 添加一键安装功能"
+    
+    echo -e "\n${CYAN}════════════════════════════════════════════${RESET}"
+    echo -e "${YELLOW}最新版本 ${remote_version} 的更新内容请访问:${RESET}"
+    echo -e "${WHITE}https://github.com/your-repo/astrbot-deploy${RESET}"
+    
+    echo -e "\n${GREEN}按任意键返回...${RESET}"
+    read -p ""
+}
+
+show_manual_update_guide() {
+    echo -e "\n${CYAN}════════════════════════════════════════════${RESET}"
+    echo -e "${WHITE}           手动更新指南${RESET}"
+    echo -e "${CYAN}════════════════════════════════════════════${RESET}"
+    
+    echo -e "${WHITE}推荐手动更新，步骤如下:${RESET}"
+    echo ""
+    echo -e "1. ${CYAN}备份当前脚本${RESET}"
+    echo -e "   ${GRAY}cp $(basename "$0") $(basename "$0").backup${RESET}"
+    echo ""
+    echo -e "2. ${CYAN}下载最新版本${RESET}"
+    echo -e "   ${GRAY}wget ${SCRIPT_BASE_URL} -O $(basename "$0").new${RESET}"
+    echo ""
+    echo -e "3. ${CYAN}验证脚本完整性${RESET}"
+    echo -e "   ${GRAY}chmod +x $(basename "$0").new${RESET}"
+    echo -e "   ${GRAY}bash $(basename "$0").new --test${RESET}"
+    echo ""
+    echo -e "4. ${CYAN}替换旧脚本${RESET}"
+    echo -e "   ${GRAY}mv $(basename "$0").new $(basename "$0")${RESET}"
+    echo ""
+    echo -e "5. ${CYAN}重新运行脚本${RESET}"
+    echo -e "   ${GRAY}bash $(basename "$0")${RESET}"
+    echo ""
+    echo -e "${YELLOW}注意:${RESET}"
+    echo -e "  • 更新前请确保已备份重要数据"
+    echo -e "  • 如果部署过程中，请先完成当前部署再更新"
+    echo -e "  • 更新后可能需要重新配置某些选项"
+    
+    echo -e "\n${CYAN}════════════════════════════════════════════${RESET}"
+    echo -e "${GREEN}按任意键返回...${RESET}"
+    read -p ""
+}
+
 # ===================== 显示函数 =====================
 print_header() {
     clear
@@ -1126,11 +1351,12 @@ show_extended_menu() {
         echo -e "${WHITE}  7${RESET} ${CYAN}${ICON_LINK} 测试共享文件夹${RESET}"
         echo -e "${WHITE}  8${RESET} ${RED}${ICON_WARN} 修复共享目录挂载${RESET}"
         echo -e "${WHITE}  9${RESET} ${CYAN}${ICON_LINK} 提取日志URL${RESET}"
+        echo -e "${WHITE} 10${RESET} ${GREEN}${ICON_UPDATE} 检测更新${RESET}"
         echo -e "${WHITE}  0${RESET} ${GRAY}返回主菜单${RESET}"
         
         print_footer
         
-        echo -ne "${YELLOW}${ICON_WARN} 请选择功能（0-9）: ${RESET}"
+        echo -ne "${YELLOW}${ICON_WARN} 请选择功能（0-10）: ${RESET}"
         read -r choice
         
         case "$choice" in
@@ -1231,6 +1457,10 @@ show_extended_menu() {
                 
                 echo -e "\n${GREEN}按任意键继续...${RESET}"
                 read -p ""
+                ;;
+            10)
+                print_header
+                check_for_updates
                 ;;
             0)
                 return
