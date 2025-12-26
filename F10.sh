@@ -1,7 +1,7 @@
 #!/bin/bash
 # ===================== 版本信息 =====================
 # 脚本名称: AstrBot+NapCat 智能部署助手
-# 版本号: v2.5.9
+# 版本号: v2.5.10
 # 最后更新: 2025年12月26日
 # 功能: 修复共享目录矛盾，统一DNS配置，优化权限管理
 # 声明: 本脚本完全免费，禁止倒卖！
@@ -28,7 +28,7 @@ NAPCAT_SHARED_PATH="/app/sharedFolder"
 # 更新配置
 UPDATE_CHECK_URL="https://cdn.jsdelivr.net/gh/ygbls/a-n-@main/F10.sh"
 SCRIPT_BASE_URL="https://cdn.jsdelivr.net/gh/ygbls/a-n-@main/version.txt"
-CURRENT_VERSION="v2.5.9"
+CURRENT_VERSION="v2.5.10"
 
 # ===================== 颜色定义 =====================
 
@@ -636,7 +636,7 @@ check_container_status() {
                 if docker inspect "$container_name" 2>/dev/null | grep -q "\"Source\": \"$SHARED_DIR\""; then
                     echo -e "${GREEN}${ICON_CHECK} 共享目录已挂载${RESET}"
                 else
-                    echo -e "${YELLOW}${ICON_WARN} 共享目录未挂载【请运行扩展功能中的修复工具】${RESET}"
+                    echo -e "${YELLOW}${ICON_WARN} 共享目录未挂载【考虑到不可抗的检测bug若一直显示这一条，请运行扩展功能中的修复工具】${RESET}"
                 fi
                 ;;
             "created")
@@ -1364,7 +1364,11 @@ show_update_changelog() {
     echo -e "\n${CYAN}════════════════════════════════════════════${RESET}"
     echo -e "${WHITE}           更新日志${RESET}"
     echo -e "${CYAN}════════════════════════════════════════════${RESET}"
-    
+
+    echo -e "${GREEN}v2.5.10 (2025-12-26)${RESET}"
+    echo -e "  • 优化系统提示"
+    echo -e "  • 重建UI界面"
+
     echo -e "${GREEN}v2.5.9 (2025-12-26)${RESET}"
     echo -e "  • 重建UI界面"
    
@@ -1455,7 +1459,7 @@ print_header() {
     echo -e "${MAGENTA}║  ${CYAN}  ██║  ██║███████║   ██║   ██║  ██║██████╔╝╚██████╔╝   ██║              ${MAGENTA}║${RESET}"
     echo -e "${MAGENTA}║  ${CYAN}  ╚═╝  ╚═╝╚══════╝   ╚═╝   ╚═╝  ╚═╝╚═════╝  ╚═════╝    ╚═╝              ${MAGENTA}║${RESET}"
     echo -e "${MAGENTA}║                                                                              ║${RESET}"
-    echo -e "${MAGENTA}║  ${WHITE}                N a p C a t  智能部署助手  v2.5.9                  ${MAGENTA}║${RESET}"
+    echo -e "${MAGENTA}║  ${WHITE}                N a p C a t  智能部署助手  v2.5.10                  ${MAGENTA}║${RESET}"
     echo -e "${MAGENTA}║  ${GRAY}           修复共享目录矛盾 | 统一DNS配置 | 优化权限管理            ${MAGENTA}║${RESET}"
     echo -e "${MAGENTA}║                                                                              ║${RESET}"
     echo -e "${MAGENTA}╚══════════════════════════════════════════════════════════════════════════════╝${RESET}"
@@ -2073,7 +2077,7 @@ step3() {
             if docker inspect astrbot 2>/dev/null | grep -q "\"Source\": \"$SHARED_DIR\""; then
                 echo -e "${GREEN}${ICON_CHECK} 共享目录已挂载${RESET}"
             else
-                echo -e "${YELLOW}${ICON_WARN} 警告：共享目录未挂载！${RESET}"
+                echo -e "${YELLOW}${ICON_WARN} 警告：共享目录未挂载！【考虑到不可抗的检测bug若一直显示这一条，请运行扩展功能中的修复工具】${RESET}"
                 echo -e "${YELLOW}建议运行扩展功能中的修复工具${RESET}"
             fi
             
@@ -2186,7 +2190,7 @@ step4() {
             if docker inspect napcat 2>/dev/null | grep -q "\"Source\": \"$SHARED_DIR\""; then
                 echo -e "${GREEN}${ICON_CHECK} 共享目录已挂载${RESET}"
             else
-                echo -e "${YELLOW}${ICON_WARN} 警告：共享目录未挂载！${RESET}"
+                echo -e "${YELLOW}${ICON_WARN} 警告：共享目录未挂载！【考虑到不可抗的检测bug若一直显示这一条，请运行扩展功能中的修复工具】${RESET}"
                 echo -e "${YELLOW}建议运行扩展功能中的修复工具${RESET}"
             fi
             
@@ -2468,7 +2472,7 @@ show_main_menu() {
 init_script() {
     echo -e "${MAGENTA}"
     echo "╔══════════════════════════════════════════════════════════╗"
-    echo "║              智能部署助手 v2.5.9 初始化                 ║"
+    echo "║              智能部署助手 v2.5.10 初始化                 ║"
     echo "║          修复共享目录矛盾，统一DNS配置                   ║"
     echo "║          优化权限管理，改进更新检测                     ║"
     echo "║          本脚本完全免费，严禁倒卖！                     ║"
