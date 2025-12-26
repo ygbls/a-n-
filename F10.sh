@@ -1,7 +1,7 @@
 #!/bin/bash
 # ===================== 版本信息 =====================
 # 脚本名称: AstrBot+NapCat 智能部署助手
-# 版本号: v2.5.8
+# 版本号: v2.5.9
 # 最后更新: 2025年12月26日
 # 功能: 修复共享目录矛盾，统一DNS配置，优化权限管理
 # 声明: 本脚本完全免费，禁止倒卖！
@@ -28,9 +28,10 @@ NAPCAT_SHARED_PATH="/app/sharedFolder"
 # 更新配置
 UPDATE_CHECK_URL="https://cdn.jsdelivr.net/gh/ygbls/a-n-@main/F10.sh"
 SCRIPT_BASE_URL="https://cdn.jsdelivr.net/gh/ygbls/a-n-@main/version.txt"
-CURRENT_VERSION="v2.5.8"
+CURRENT_VERSION="v2.5.9"
 
 # ===================== 颜色定义 =====================
+
 RED='\033[1;31m'
 GREEN='\033[1;32m'
 YELLOW='\033[1;33m'
@@ -41,7 +42,7 @@ WHITE='\033[1;37m'
 GRAY='\033[1;90m'
 ORANGE='\033[1;91m'
 LIME='\033[1;92m'
-SKY='\033[1;96m'
+SKY='\033[1;96m'     
 PINK='\033[1;95m'
 RESET='\033[0m'
 BOLD='\033[1m'
@@ -176,6 +177,258 @@ check_commands() {
 }
 
 # ===================== 工具函数定义 =====================
+show_container_details() {
+    print_header
+    echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════════════════╗${RESET}"
+    echo -e "${CYAN}║  ${WHITE}📊 容器状态总览                                                           ${CYAN}║${RESET}"
+    echo -e "${CYAN}╠══════════════════════════════════════════════════════════════════════════════╣${RESET}"
+    
+    check_container_status "astrbot"
+    echo -e "${CYAN}╠══════════════════════════════════════════════════════════════════════════════╣${RESET}"
+    check_container_status "napcat"
+    
+    echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════════════════╝${RESET}"
+    echo -e "\n${GREEN}按任意键继续...${RESET}"
+    read -p ""
+}
+
+show_container_logs() {
+    print_header
+    echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════════════════╗${RESET}"
+    echo -e "${CYAN}║  ${WHITE}🔍 容器日志查看                                                           ${CYAN}║${RESET}"
+    echo -e "${CYAN}╠══════════════════════════════════════════════════════════════════════════════╣${RESET}"
+    
+    echo -e "${CYAN}选择要查看日志的容器：${RESET}"
+    echo -e "  ${CYAN}[1] AstrBot 日志${RESET}"
+    echo -e "  ${CYAN}[2] NapCat 日志${RESET}"
+    echo -e "  ${CYAN}[3] 两者都查看${RESET}"
+    echo -e "  ${CYAN}[0] 返回${RESET}"
+    
+    echo -ne "${YELLOW}请选择: ${RESET}"
+    read -r log_choice
+    
+    case "$log_choice" in
+        1)
+            echo -e "\n${CYAN}正在获取AstrBot日志...${RESET}"
+            timeout 10 docker logs astrbot --tail=20
+            ;;
+        2)
+            echo -e "\n${CYAN}正在获取NapCat日志...${RESET}"
+            timeout 10 docker logs napcat --tail=20
+            ;;
+        3)
+            echo -e "\n${CYAN}AstrBot日志:${RESET}"
+            timeout 5 docker logs astrbot --tail=10
+            echo -e "\n${CYAN}NapCat日志:${RESET}"
+            timeout 5 docker logs napcat --tail=10
+            ;;
+        *)
+            return
+            ;;
+    esac
+    
+    echo -e "\n${GREEN}按任意键继续...${RESET}"
+    read -p ""
+}
+
+restart_containers() {
+    print_header
+    echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════════════════╗${RESET}"
+    echo -e "${CYAN}║  ${WHITE}🔄 容器重启工具                                                           ${CYAN}║${RESET}"
+    echo -e "${CYAN}╠══════════════════════════════════════════════════════════════════════════════╣${RESET}"
+    
+    if confirm_action "重启所有容器"; then
+        echo -e "\n${CYAN}正在重启AstrBot...${RESET}"
+        docker restart astrbot 2>/dev/null && echo -e "${GREEN}✅ AstrBot重启成功${RESET}" || echo -e "${RED}❌ AstrBot重启失败${RESET}"
+        
+        echo -e "\n${CYAN}正在重启NapCat...${RESET}"
+        docker restart napcat 2>/dev/null && echo -e "${GREEN}✅ NapCat重启成功${RESET}" || echo -e "${RED}❌ NapCat重启失败${RESET}"
+        
+        echo -e "\n${GREEN}容器重启完成${RESET}"
+        sleep 2
+        show_container_details
+    fi
+}
+
+clean_containers() {
+    print_header
+    echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════════════════╗${RESET}"
+    echo -e "${CYAN}║  ${WHITE}🗑️  容器清理工具                                                           ${CYAN}║${RESET}"
+    echo -e "${CYAN}╠══════════════════════════════════════════════════════════════════════════════╣${RESET}"
+    
+    echo -e "${RED}⚠️  警告：此操作将删除容器和数据！${RESET}"
+    echo -e "\n选择清理操作："
+    echo -e "  ${CYAN}[1] 仅删除容器（保留数据）${RESET}"
+    echo -e "  ${CYAN}[2] 删除容器和数据${RESET}"
+    echo -e "  ${CYAN}[3] 清理Docker系统（无用的镜像、容器等）${RESET}"
+    echo -e "  ${CYAN}[0] 取消${RESET}"
+    
+    echo -ne "${YELLOW}请选择: ${RESET}"
+    read -r clean_choice
+    
+    case "$clean_choice" in
+        1)
+            if confirm_action "删除容器（数据将保留）"; then
+                docker rm -f astrbot napcat 2>/dev/null
+                echo -e "${GREEN}✅ 容器已删除${RESET}"
+            fi
+            ;;
+        2)
+            if confirm_action "删除容器和数据（不可恢复）"; then
+                docker rm -f astrbot napcat 2>/dev/null
+                rm -rf astrbot napcat data/astrbot data/napcat 2>/dev/null
+                echo -e "${GREEN}✅ 容器和数据已删除${RESET}"
+            fi
+            ;;
+        3)
+            if confirm_action "清理Docker系统"; then
+                docker system prune -f
+                echo -e "${GREEN}✅ Docker系统已清理${RESET}"
+            fi
+            ;;
+    esac
+}
+
+show_network_speed() {
+    print_header
+    echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════════════════╗${RESET}"
+    echo -e "${CYAN}║  ${WHITE}📶 实时网速监控                                                           ${CYAN}║${RESET}"
+    echo -e "${CYAN}╠══════════════════════════════════════════════════════════════════════════════╣${RESET}"
+    
+    monitor_speed_mb &
+    speed_pid=$!
+    
+    echo -e "\n${CYAN}网速监控已启动...${RESET}"
+    echo -e "${GRAY}按任意键停止监控${RESET}"
+    read -p ""
+    
+    safe_kill "$speed_pid"
+    printf "\r\033[K"
+    echo -e "${GREEN}网速监控已停止${RESET}"
+}
+
+show_rollback_menu() {
+    while true; do
+        print_header
+        echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════════════════╗${RESET}"
+        echo -e "${CYAN}║  ${WHITE}↩️  步骤回滚功能                                                           ${CYAN}║${RESET}"
+        echo -e "${CYAN}╠══════════════════════════════════════════════════════════════════════════════╣${RESET}"
+        
+        echo -e "${RED}⚠️  警告：回滚操作将删除配置和容器，谨慎操作！${RESET}"
+        echo -e "\n选择要回滚的步骤："
+        echo -e "  ${CYAN}[1] 回滚网络配置${RESET}"
+        echo -e "  ${CYAN}[2] 回滚Docker安装${RESET}"
+        echo -e "  ${CYAN}[3] 回滚AstrBot部署${RESET}"
+        echo -e "  ${CYAN}[4] 回滚NapCat部署${RESET}"
+        echo -e "  ${CYAN}[0] 返回${RESET}"
+        
+        echo -ne "${YELLOW}请选择: ${RESET}"
+        read -r rollback_choice
+        
+        case "$rollback_choice" in
+            1|2|3|4)
+                if confirm_action "回滚步骤 $rollback_choice"; then
+                    rollback_step "$rollback_choice"
+                fi
+                ;;
+            0)
+                return
+                ;;
+            *)
+                echo -e "${RED}无效选择${RESET}"
+                sleep 1
+                ;;
+        esac
+        
+        echo -e "\n${GREEN}按任意键继续...${RESET}"
+        read -p ""
+    done
+}
+
+show_backup_menu() {
+    print_header
+    echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════════════════╗${RESET}"
+    echo -e "${CYAN}║  ${WHITE}🛡️  数据备份恢复                                                           ${CYAN}║${RESET}"
+    echo -e "${CYAN}╠══════════════════════════════════════════════════════════════════════════════╣${RESET}"
+    
+    echo -e "\n选择操作："
+    echo -e "  ${CYAN}[1] 创建备份${RESET}"
+    echo -e "  ${CYAN}[2] 恢复备份${RESET}"
+    echo -e "  ${CYAN}[3] 查看备份列表${RESET}"
+    echo -e "  ${CYAN}[0] 返回${RESET}"
+    
+    echo -ne "${YELLOW}请选择: ${RESET}"
+    read -r backup_choice
+    
+    case "$backup_choice" in
+        1)
+            create_backup
+            ;;
+        2)
+            restore_backup
+            ;;
+        3)
+            list_backups
+            ;;
+    esac
+}
+
+create_backup() {
+    local backup_dir="$BACKUP_DIR/backup_$(date +%Y%m%d_%H%M%S)"
+    mkdir -p "$backup_dir"
+    
+    echo -e "\n${CYAN}正在创建备份...${RESET}"
+    
+    # 备份容器配置
+    docker inspect astrbot > "$backup_dir/astrbot.json" 2>/dev/null
+    docker inspect napcat > "$backup_dir/napcat.json" 2>/dev/null
+    
+    # 备份数据
+    if [ -d "astrbot/data" ]; then
+        cp -r astrbot/data "$backup_dir/astrbot_data"
+    fi
+    
+    if [ -d "napcat/data" ]; then
+        cp -r napcat/data "$backup_dir/napcat_data"
+    fi
+    
+    # 备份共享目录中的关键文件
+    if [ -d "$SHARED_DIR" ]; then
+        find "$SHARED_DIR" -type f -name "*.json" -o -name "*.yml" -o -name "*.yaml" | \
+            xargs -I {} cp --parents {} "$backup_dir/" 2>/dev/null
+    fi
+    
+    # 创建备份信息文件
+    cat > "$backup_dir/backup_info.txt" << EOF
+备份时间: $(date)
+脚本版本: $CURRENT_VERSION
+包含内容:
+  - AstrBot容器配置
+  - NapCat容器配置
+  - AstrBot数据目录
+  - NapCat数据目录
+  - 共享目录配置文件
+EOF
+    
+    echo -e "${GREEN}✅ 备份创建完成: $backup_dir${RESET}"
+    echo -e "${GRAY}备份大小: $(du -sh "$backup_dir" | cut -f1)${RESET}"
+}
+
+list_backups() {
+    echo -e "\n${CYAN}备份列表:${RESET}"
+    if [ -d "$BACKUP_DIR" ]; then
+        find "$BACKUP_DIR" -name "backup_*" -type d | sort -r | while read dir; do
+            local size=$(du -sh "$dir" 2>/dev/null | cut -f1)
+            local date=$(basename "$dir" | sed 's/backup_//')
+            echo -e "  ${CYAN}📁 ${dir}${RESET} (${size})"
+        done
+    else
+        echo -e "${YELLOW}暂无备份${RESET}"
+    fi
+}
+
+# 注意：原脚本中已有一个 extract_urls_from_logs 函数，我们需要修改它，使其可以接受一个参数，并处理"both"的情况。
+# 我们将修改原函数，而不是重新定义。所以，请找到原函数并修改。
 confirm_action() {
     local action_desc="$1"
     local default="${2:-Y}"
@@ -227,25 +480,86 @@ monitor_speed_mb() {
         echo -e "${YELLOW}${ICON_WARN} 无法获取网卡信息，跳过网速监控！${RESET}"
     fi
 }
-
-extract_urls_from_logs() {
-    local container_name=$1
-    echo -e "\n${CYAN}${ICON_LINK} 从 $container_name 日志提取URL${RESET}"
+create_backup() {
+    local backup_dir="$BACKUP_DIR/backup_$(date +%Y%m%d_%H%M%S)"
+    mkdir -p "$backup_dir"
     
-    if ! docker ps -a --format "{{.Names}}" | grep -q "^${container_name}$"; then
-        echo -e "${RED}${ICON_CROSS} 容器 $container_name 不存在${RESET}"
-        return 1
+    echo -e "\n${CYAN}正在创建备份...${RESET}"
+    
+    # 备份容器配置
+    docker inspect astrbot > "$backup_dir/astrbot.json" 2>/dev/null
+    docker inspect napcat > "$backup_dir/napcat.json" 2>/dev/null
+    
+    # 备份数据
+    if [ -d "astrbot/data" ]; then
+        cp -r astrbot/data "$backup_dir/astrbot_data"
     fi
     
-    local urls=$(timeout 10 docker logs "$container_name" 2>/dev/null | grep -Eo 'https?://[^"[:space:]]+' | sort -u)
+    if [ -d "napcat/data" ]; then
+        cp -r napcat/data "$backup_dir/napcat_data"
+    fi
+    
+    # 备份共享目录中的关键文件
+    if [ -d "$SHARED_DIR" ]; then
+        find "$SHARED_DIR" -type f -name "*.json" -o -name "*.yml" -o -name "*.yaml" | \
+            xargs -I {} cp --parents {} "$backup_dir/" 2>/dev/null
+    fi
+    
+    # 创建备份信息文件
+    cat > "$backup_dir/backup_info.txt" << EOF
+备份时间: $(date)
+脚本版本: $CURRENT_VERSION
+包含内容:
+  - AstrBot容器配置
+  - NapCat容器配置
+  - AstrBot数据目录
+  - NapCat数据目录
+  - 共享目录配置文件
+EOF
+    
+    echo -e "${GREEN}✅ 备份创建完成: $backup_dir${RESET}"
+    echo -e "${GRAY}备份大小: $(du -sh "$backup_dir" | cut -f1)${RESET}"
+}
+
+list_backups() {
+    echo -e "\n${CYAN}备份列表:${RESET}"
+    if [ -d "$BACKUP_DIR" ]; then
+        find "$BACKUP_DIR" -name "backup_*" -type d | sort -r | while read dir; do
+            local size=$(du -sh "$dir" 2>/dev/null | cut -f1)
+            local date=$(basename "$dir" | sed 's/backup_//')
+            echo -e "  ${CYAN}📁 ${dir}${RESET} (${size})"
+        done
+    else
+        echo -e "${YELLOW}暂无备份${RESET}"
+    fi
+}
+
+extract_urls_from_logs() {
+    local target=${1:-"both"}  # 默认为both，同时提取两个容器的日志
+    local urls=""
+    
+    if [ "$target" = "both" ] || [ "$target" = "astrbot" ]; then
+        if docker ps -a --format "{{.Names}}" | grep -q "^astrbot$"; then
+            urls+=$(timeout 10 docker logs astrbot 2>/dev/null | grep -Eo 'https?://[^"[:space:]]+' | sort -u)
+            [ -n "$urls" ] && urls+=$'\n'
+        fi
+    fi
+    
+    if [ "$target" = "both" ] || [ "$target" = "napcat" ]; then
+        if docker ps -a --format "{{.Names}}" | grep -q "^napcat$"; then
+            urls+=$(timeout 10 docker logs napcat 2>/dev/null | grep -Eo 'https?://[^"[:space:]]+' | sort -u)
+        fi
+    fi
     
     if [ -n "$urls" ]; then
-        echo "$urls"
-        local url_file="${LOG_DIR}/${container_name}_urls_$(date +%Y%m%d_%H%M%S).txt"
+        local url_file="${LOG_DIR}/extracted_urls_$(date +%Y%m%d_%H%M%S).txt"
         echo "$urls" > "$url_file"
-        echo -e "${GREEN}${ICON_CHECK} URL已保存到: $url_file${RESET}"
+        
+        echo -e "\n${CYAN}提取到的URL:${RESET}"
+        echo "$urls"
+        echo -e "\n${GREEN}✅ URL已保存到: $url_file${RESET}"
     else
-        echo -e "${YELLOW}${ICON_WARN} 未找到URL或读取超时${RESET}"
+        echo -e "${YELLOW}⚠️  未找到URL或读取超时${RESET}"
     fi
 }
 
@@ -1051,6 +1365,9 @@ show_update_changelog() {
     echo -e "${WHITE}           更新日志${RESET}"
     echo -e "${CYAN}════════════════════════════════════════════${RESET}"
     
+    echo -e "${GREEN}v2.5.9 (2025-12-26)${RESET}"
+    echo -e "  • 重建UI界面"
+   
     echo -e "${GREEN}v2.5.8 (2025-12-26)${RESET}"
     echo -e "  • 修复共享目录路径矛盾"
     echo -e "  • 统一DNS配置为8.8.8.8, 114.114.114.114, 223.5.5.5, 1.1.1.1"
@@ -1058,7 +1375,7 @@ show_update_changelog() {
     echo -e "  • 优化容器重启策略为always"
     echo -e "  • 移除重复的警告提示"
     echo -e "  • 修复更新检测逻辑"
-    
+
     echo -e "\n${GREEN}v2.5.4 (2025-12-25)${RESET}"
     echo -e "  • 添加DNS修复功能到扩展菜单"
     echo -e "  • 优化DNS配置步骤"
@@ -1129,35 +1446,167 @@ show_manual_update_guide() {
 # ===================== 显示函数 =====================
 print_header() {
     clear
-    echo -e "${MAGENTA}════════════════════════════════════════════════════════════════${RESET}"
-    echo -e "${CYAN}  ╔═╗╔═╗╔╦╗╔═╗╦═╗╔╦╗  ╔═╗╔═╗╔╦╗  ${WHITE}智能部署助手 v2.5.8${RESET}"
-    echo -e "${CYAN}  ║╣ ║ ║║║║║╣ ╠╦╝ ║   ╠═╝║ ║║║║  ${GRAY}AstrBot + NapCat${RESET}"
-    echo -e "${CYAN}  ╚═╝╚═╝╩ ╩╚═╝╩╚═ ╩   ╩  ╚═╝╩ ╩  ${YELLOW}修复优化版${RESET}"
-    echo -e "${MAGENTA}════════════════════════════════════════════════════════════════${RESET}"
+    echo -e "${MAGENTA}╔══════════════════════════════════════════════════════════════════════════════╗${RESET}"
+    echo -e "${MAGENTA}║                                                                              ║${RESET}"
+    echo -e "${MAGENTA}║  ${CYAN}   █████╗ ███████╗████████╗██████╗ ██████╗  ██████╗ ████████╗           ${MAGENTA}║${RESET}"
+    echo -e "${MAGENTA}║  ${CYAN}  ██╔══██╗██╔════╝╚══██╔══╝██╔══██╗██╔══██╗██╔═══██╗╚══██╔══╝           ${MAGENTA}║${RESET}"
+    echo -e "${MAGENTA}║  ${CYAN}  ███████║███████╗   ██║   ██████╔╝██████╔╝██║   ██║   ██║              ${MAGENTA}║${RESET}"
+    echo -e "${MAGENTA}║  ${CYAN}  ██╔══██║╚════██║   ██║   ██╔══██╗██╔══██╗██║   ██║   ██║              ${MAGENTA}║${RESET}"
+    echo -e "${MAGENTA}║  ${CYAN}  ██║  ██║███████║   ██║   ██║  ██║██████╔╝╚██████╔╝   ██║              ${MAGENTA}║${RESET}"
+    echo -e "${MAGENTA}║  ${CYAN}  ╚═╝  ╚═╝╚══════╝   ╚═╝   ╚═╝  ╚═╝╚═════╝  ╚═════╝    ╚═╝              ${MAGENTA}║${RESET}"
+    echo -e "${MAGENTA}║                                                                              ║${RESET}"
+    echo -e "${MAGENTA}║  ${WHITE}                N a p C a t  智能部署助手  v2.5.9                  ${MAGENTA}║${RESET}"
+    echo -e "${MAGENTA}║  ${GRAY}           修复共享目录矛盾 | 统一DNS配置 | 优化权限管理            ${MAGENTA}║${RESET}"
+    echo -e "${MAGENTA}║                                                                              ║${RESET}"
+    echo -e "${MAGENTA}╚══════════════════════════════════════════════════════════════════════════════╝${RESET}"
     echo ""
 }
 
-print_footer() {
-    echo -e "${GRAY}════════════════════════════════════════════════════════════════${RESET}"
-    echo -e "${GRAY}提示: 按对应数字选择功能，q退出 | $(date +"%Y-%m-%d %H:%M:%S")${RESET}"
-    echo -e "${GRAY}════════════════════════════════════════════════════════════════${RESET}"
+print_system_status() {
+    echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════════════════╗${RESET}"
+    echo -e "${CYAN}║  ${WHITE}📊 系统状态监控                                                          ${CYAN}║${RESET}"
+    echo -e "${CYAN}╠══════════════════════════════════════════════════════════════════════════════╣${RESET}"
+    
+    # 获取系统信息
+    local cpu_usage=$(top -bn1 | grep "Cpu(s)" | awk '{print $2}' | cut -d'%' -f1)
+    local mem_total=$(free -h | awk '/^Mem:/{print $2}')
+    local mem_used=$(free -h | awk '/^Mem:/{print $3}')
+    local disk_total=$(df -h / | awk 'NR==2 {print $2}')
+    local disk_used=$(df -h / | awk 'NR==2 {print $3}')
+    local disk_percent=$(df / | awk 'NR==2 {print $5}' | tr -d '%')
+    local load_avg=$(cat /proc/loadavg | awk '{print $1", "$2", "$3}')
+    local uptime_info=$(uptime -p | sed 's/up //')
+    
+    # 进度条函数
+    progress_bar() {
+        local value=$1
+        local max=100
+        local bar_width=30
+        local filled=$((value * bar_width / max))
+        local empty=$((bar_width - filled))
+        
+        printf "["
+        for ((i=0; i<filled; i++)); do printf "█"; done
+        for ((i=0; i<empty; i++)); do printf " "; done
+        printf "] %3d%%" "$value"
+    }
+    
+    # CPU使用率
+    local cpu_color=$([ "${cpu_usage%.*}" -gt 80 ] && echo "$RED" || ([ "${cpu_usage%.*}" -gt 50 ] && echo "$YELLOW" || echo "$GREEN"))
+    echo -e "${CYAN}║  ${WHITE}🖥  CPU使用率: ${cpu_color}$(progress_bar ${cpu_usage%.*})${WHITE}                             ${CYAN}║${RESET}"
+    
+    # 内存使用
+    local mem_percent=$(free | awk '/^Mem:/{print $3/$2*100}')
+    local mem_color=$([ "${mem_percent%.*}" -gt 80 ] && echo "$RED" || ([ "${mem_percent%.*}" -gt 50 ] && echo "$YELLOW" || echo "$GREEN"))
+    echo -e "${CYAN}║  ${WHITE}💾  内存使用: ${mem_color}$(progress_bar ${mem_percent%.*})${WHITE} ${mem_used}/${mem_total}       ${CYAN}║${RESET}"
+    
+    # 磁盘使用
+    local disk_color=$([ "$disk_percent" -gt 80 ] && echo "$RED" || ([ "$disk_percent" -gt 50 ] && echo "$YELLOW" || echo "$GREEN"))
+    echo -e "${CYAN}║  ${WHITE}💿  磁盘使用: ${disk_color}$(progress_bar $disk_percent)${WHITE} ${disk_used}/${disk_total}       ${CYAN}║${RESET}"
+    
+    # 负载和运行时间
+    echo -e "${CYAN}║  ${WHITE}📈  系统负载: ${WHITE}${load_avg}${WHITE}                                     ${CYAN}║${RESET}"
+    echo -e "${CYAN}║  ${WHITE}⏱  运行时间: ${WHITE}${uptime_info}${WHITE}                                   ${CYAN}║${RESET}"
+    
+    echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════════════════╝${RESET}"
+    echo ""
 }
 
-print_status() {
-    echo -e "${CYAN}当前状态:${RESET}"
-    echo -n "  "
-    [ "$STEP1_DONE" = true ] && echo -n "${GREEN}①${RESET} " || echo -n "${GRAY}①${RESET} "
-    [ "$STEP2_DONE" = true ] && echo -n "${GREEN}②${RESET} " || echo -n "${GRAY}②${RESET} "
-    [ "$STEP3_DONE" = true ] && echo -n "${GREEN}③${RESET} " || echo -n "${GRAY}③${RESET} "
-    [ "$STEP4_DONE" = true ] && echo -n "${GREEN}④${RESET} " || echo -n "${GRAY}④${RESET} "
+print_deployment_status() {
+    echo -e "${GREEN}╔══════════════════════════════════════════════════════════════════════════════╗${RESET}"
+    echo -e "${GREEN}║  ${WHITE}🚀 部署进度状态                                                           ${GREEN}║${RESET}"
+    echo -e "${GREEN}╠══════════════════════════════════════════════════════════════════════════════╣${RESET}"
+    
+    local step_status=()
+    step_status[1]=$([ "$STEP1_DONE" = true ] && echo "${GREEN}✓${RESET}" || echo "${GRAY}○${RESET}")
+    step_status[2]=$([ "$STEP2_DONE" = true ] && echo "${GREEN}✓${RESET}" || echo "${GRAY}○${RESET}")
+    step_status[3]=$([ "$STEP3_DONE" = true ] && echo "${GREEN}✓${RESET}" || echo "${GRAY}○${RESET}")
+    step_status[4]=$([ "$STEP4_DONE" = true ] && echo "${GREEN}✓${RESET}" || echo "${GRAY}○${RESET}")
+    
+    echo -e "${GREEN}║                                                                              ║${RESET}"
+    echo -e "${GREEN}║  ${WHITE}     [${step_status[1]}] ${WHITE}① 网络配置${RESET}   ${WHITE}[${step_status[2]}] ${WHITE}② Docker安装${RESET}   ${WHITE}[${step_status[3]}] ${WHITE}③ AstrBot${RESET}   ${WHITE}[${step_status[4]}] ${WHITE}④ NapCat${RESET}    ${GREEN}║${RESET}"
+    echo -e "${GREEN}║                                                                              ║${RESET}"
+    
+    # 容器状态
+    local astrbot_status=$(docker inspect -f '{{.State.Status}}' astrbot 2>/dev/null || echo "not_exist")
+    local napcat_status=$(docker inspect -f '{{.State.Status}}' napcat 2>/dev/null || echo "not_exist")
+    
+    echo -e "${GREEN}║  ${WHITE}容器状态:                                                                 ${GREEN}║${RESET}"
+    
+    if [ "$astrbot_status" = "running" ]; then
+        echo -e "${GREEN}║     ${GREEN}✅ AstrBot: 运行中${RESET} (端口: 6180-6200, 11451)                    ${GREEN}║${RESET}"
+    elif [ "$astrbot_status" = "not_exist" ]; then
+        echo -e "${GREEN}║     ${GRAY}○ AstrBot: 未部署${RESET}                                             ${GREEN}║${RESET}"
+    else
+        echo -e "${GREEN}║     ${YELLOW}⚠️ AstrBot: ${astrbot_status}${RESET}                                  ${GREEN}║${RESET}"
+    fi
+    
+    if [ "$napcat_status" = "running" ]; then
+        echo -e "${GREEN}║     ${GREEN}✅ NapCat: 运行中${RESET} (端口: 3000, 3001, 6099)                    ${GREEN}║${RESET}"
+    elif [ "$napcat_status" = "not_exist" ]; then
+        echo -e "${GREEN}║     ${GRAY}○ NapCat: 未部署${RESET}                                              ${GREEN}║${RESET}"
+    else
+        echo -e "${GREEN}║     ${YELLOW}⚠️ NapCat: ${napcat_status}${RESET}                                   ${GREEN}║${RESET}"
+    fi
+    
+    echo -e "${GREEN}║                                                                              ║${RESET}"
+    echo -e "${GREEN}╚══════════════════════════════════════════════════════════════════════════════╝${RESET}"
+    echo ""
+}
+
+print_main_menu() {
+    echo -e "${BLUE}╔══════════════════════════════════════════════════════════════════════════════╗${RESET}"
+    echo -e "${BLUE}║  ${WHITE}📱 主功能菜单                                                              ${BLUE}║${RESET}"
+    echo -e "${BLUE}╠══════════════════════════════════════════════════════════════════════════════╣${RESET}"
+    
+    echo -e "${BLUE}║                                                                              ║${RESET}"
+    echo -e "${BLUE}║  ${WHITE}┌───────────────── 核心部署 ─────────────────┐${RESET}                       ${BLUE}║${RESET}"
+    echo -e "${BLUE}║                                                                              ║${RESET}"
+    
+    echo -e "${BLUE}║  ${CYAN}[1] ${GREEN}🌐 网络配置与DNS优化${RESET}                                        ${BLUE}║${RESET}"
+    echo -e "${BLUE}║       ${WHITE}优化网络设置，配置多重DNS解析${RESET}                                    ${BLUE}║${RESET}"
+    echo -e "${BLUE}║                                                                              ║${RESET}"
+    
+    echo -e "${BLUE}║  ${CYAN}[2] ${GREEN}🐳 Docker环境管理${RESET}                                          ${BLUE}║${RESET}"
+    echo -e "${BLUE}║       ${WHITE}安装/卸载Docker，配置镜像加速${RESET}                                    ${BLUE}║${RESET}"
+    echo -e "${BLUE}║                                                                              ║${RESET}"
+    
+    echo -e "${BLUE}║  ${CYAN}[3] ${GREEN}🤖 部署AstrBot机器人${RESET}                                       ${BLUE}║${RESET}"
+    echo -e "${BLUE}║       ${WHITE}端口: 6180-6200, 11451 | Web界面管理${RESET}                            ${BLUE}║${RESET}"
+    echo -e "${BLUE}║                                                                              ║${RESET}"
+    
+    echo -e "${BLUE}║  ${CYAN}[4] ${GREEN}😺 部署NapCat协议服务${RESET}                                      ${BLUE}║${RESET}"
+    echo -e "${BLUE}║       ${WHITE}端口: 3000, 3001, 6099 | 协议端管理${RESET}                             ${BLUE}║${RESET}"
+    echo -e "${BLUE}║                                                                              ║${RESET}"
+    
+    echo -e "${BLUE}║  ${WHITE}└─────────────────────────────────────────────┘${RESET}                       ${BLUE}║${RESET}"
+    echo -e "${BLUE}║                                                                              ║${RESET}"
+    echo -e "${BLUE}╠══════════════════════════════════════════════════════════════════════════════╣${RESET}"
+    
+    echo -e "${BLUE}║  ${WHITE}┌─────────────── 快捷操作 ───────────────┐${RESET}                            ${BLUE}║${RESET}"
+    echo -e "${BLUE}║                                                                              ║${RESET}"
+    
+    echo -e "${BLUE}║  ${CYAN}[0] ${GREEN}🚀 一键完整部署${RESET} (推荐新手使用)                               ${BLUE}║${RESET}"
+    echo -e "${BLUE}║  ${CYAN}[E] ${CYAN}⚙️  扩展工具箱${RESET} (监控/修复/工具)                              ${BLUE}║${RESET}"
+    echo -e "${BLUE}║  ${CYAN}[C] ${SKY}📋  查看详细状态${RESET} (容器/资源)                                 ${BLUE}║${RESET}"
+    echo -e "${BLUE}║  ${CYAN}[U] ${YELLOW}🔄  检查更新${RESET} (脚本更新)                                    ${BLUE}║${RESET}"
+    echo -e "${BLUE}║  ${CYAN}[Q] ${RED}❌  退出脚本${RESET}                                               ${BLUE}║${RESET}"
+    
+    echo -e "${BLUE}║  ${WHITE}└─────────────────────────────────────────┘${RESET}                            ${BLUE}║${RESET}"
+    echo -e "${BLUE}║                                                                              ║${RESET}"
+    echo -e "${BLUE}╚══════════════════════════════════════════════════════════════════════════════╝${RESET}"
     echo ""
 }
 
 print_contact_info() {
-    echo -e "${YELLOW}${ICON_WARN} 重要声明: 本脚本完全免费，严禁倒卖！${RESET}"
-    echo -e "${CYAN}${ICON_HEART} 技术支持QQ: 3076737056${RESET}"
+    echo -e "${MAGENTA}╔══════════════════════════════════════════════════════════════════════════════╗${RESET}"
+    echo -e "${MAGENTA}║                                                                              ║${RESET}"
+    echo -e "${MAGENTA}║  ${YELLOW}⚠️  重要声明: ${WHITE}本脚本完全免费，严禁倒卖！${RESET}                               ${MAGENTA}║${RESET}"
+    echo -e "${MAGENTA}║  ${CYAN}💝 技术支持: ${WHITE}QQ 3076737056 | 最后更新: 2025年12月26日${RESET}                ${MAGENTA}║${RESET}"
+    echo -e "${MAGENTA}║                                                                              ║${RESET}"
+    echo -e "${MAGENTA}╚══════════════════════════════════════════════════════════════════════════════╝${RESET}"
+    echo ""
 }
-
 # ===================== 步骤函数定义 =====================
 step1() {
     CURRENT_STEP="step1"
@@ -1876,144 +2325,104 @@ run_all() {
 show_extended_menu() {
     while true; do
         print_header
-        print_status
+        echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════════════════╗${RESET}"
+        echo -e "${CYAN}║  ${WHITE}🔧 扩展功能工具箱                                                         ${CYAN}║${RESET}"
+        echo -e "${CYAN}╠══════════════════════════════════════════════════════════════════════════════╣${RESET}"
         
-        echo -e "${CYAN}════════════════════════════════════════════${RESET}"
-        echo -e "${WHITE}          扩展功能菜单${RESET}"
-        echo -e "${CYAN}════════════════════════════════════════════${RESET}"
+        echo -e "${CYAN}║                                                                              ║${RESET}"
+        echo -e "${CYAN}║  ${WHITE}┌───────────── 容器管理 ─────────────┐${RESET}                               ${CYAN}║${RESET}"
+        echo -e "${CYAN}║                                                                              ║${RESET}"
         
-        echo -e "${WHITE}  1${RESET} ${CYAN}${ICON_INFO} 查看容器状态${RESET}"
-        echo -e "${WHITE}  2${RESET} ${CYAN}${ICON_CPU} 查看系统资源${RESET}"
-        echo -e "${WHITE}  3${RESET} ${CYAN}${ICON_NETWORK} 网络连通性测试${RESET}"
-        echo -e "${WHITE}  4${RESET} ${CYAN}${ICON_GEAR} 版本兼容性检查${RESET}"
-        echo -e "${WHITE}  5${RESET} ${CYAN}${ICON_WARN} 步骤回滚功能${RESET}"
-        echo -e "${WHITE}  6${RESET} ${CYAN}${ICON_FOLDER} 检查共享目录${RESET}"
-        echo -e "${WHITE}  7${RESET} ${CYAN}${ICON_LINK} 测试共享文件夹${RESET}"
-        echo -e "${WHITE}  8${RESET} ${RED}${ICON_WARN} 修复共享目录挂载${RESET}"
-        echo -e "${WHITE}  9${RESET} ${CYAN}${ICON_LINK} 提取日志URL${RESET}"
-        echo -e "${WHITE} 10${RESET} ${GREEN}${ICON_UPDATE} 检测更新${RESET}"
-        echo -e "${WHITE} 11${RESET} ${BLUE}${ICON_DNS} DNS修复功能${RESET}"
-        echo -e "${WHITE}  0${RESET} ${GRAY}返回主菜单${RESET}"
+        echo -e "${CYAN}║  ${CYAN}[1] ${GREEN}📊 容器状态总览${RESET}                                         ${CYAN}║${RESET}"
+        echo -e "${CYAN}║  ${CYAN}[2] ${GREEN}🔍 容器日志查看${RESET}                                         ${CYAN}║${RESET}"
+        echo -e "${CYAN}║  ${CYAN}[3] ${GREEN}🔄 重启容器${RESET}                                             ${CYAN}║${RESET}"
+        echo -e "${CYAN}║  ${CYAN}[4] ${RED}🗑️  清理容器${RESET}                                             ${CYAN}║${RESET}"
         
-        print_footer
+        echo -e "${CYAN}║                                                                              ║${RESET}"
+        echo -e "${CYAN}║  ${WHITE}┌───────────── 网络工具 ─────────────┐${RESET}                               ${CYAN}║${RESET}"
+        echo -e "${CYAN}║                                                                              ║${RESET}"
         
-        echo -ne "${YELLOW}${ICON_WARN} 请选择功能（0-11）: ${RESET}"
+        echo -e "${CYAN}║  ${CYAN}[5] ${GREEN}🌐 网络连通测试${RESET}                                         ${CYAN}║${RESET}"
+        echo -e "${CYAN}║  ${CYAN}[6] ${GREEN}📡 DNS配置修复${RESET}                                          ${CYAN}║${RESET}"
+        echo -e "${CYAN}║  ${CYAN}[7] ${GREEN}📶 实时网速监控${RESET}                                         ${CYAN}║${RESET}"
+        
+        echo -e "${CYAN}║                                                                              ║${RESET}"
+        echo -e "${CYAN}║  ${WHITE}┌───────────── 文件系统 ─────────────┐${RESET}                               ${CYAN}║${RESET}"
+        echo -e "${CYAN}║                                                                              ║${RESET}"
+        
+        echo -e "${CYAN}║  ${CYAN}[8] ${GREEN}📁 共享目录检查${RESET}                                         ${CYAN}║${RESET}"
+        echo -e "${CYAN}║  ${CYAN}[9] ${GREEN}🔗 共享功能测试${RESET}                                         ${CYAN}║${RESET}"
+        echo -e "${CYAN}║  ${CYAN}[10] ${RED}🔧 挂载修复工具${RESET}                                         ${CYAN}║${RESET}"
+        
+        echo -e "${CYAN}║                                                                              ║${RESET}"
+        echo -e "${CYAN}║  ${WHITE}┌───────────── 系统工具 ─────────────┐${RESET}                               ${CYAN}║${RESET}"
+        echo -e "${CYAN}║                                                                              ║${RESET}"
+        
+        echo -e "${CYAN}║  ${CYAN}[11] ${GREEN}📈 系统资源监控${RESET}                                        ${CYAN}║${RESET}"
+        echo -e "${CYAN}║  ${CYAN}[12] ${GREEN}🔍 版本兼容检查${RESET}                                        ${CYAN}║${RESET}"
+        echo -e "${CYAN}║  ${CYAN}[13] ${GREEN}📝 日志提取工具${RESET}                                        ${CYAN}║${RESET}"
+        
+        echo -e "${CYAN}║                                                                              ║${RESET}"
+        echo -e "${CYAN}║  ${WHITE}┌───────────── 高级功能 ─────────────┐${RESET}                               ${CYAN}║${RESET}"
+        echo -e "${CYAN}║                                                                              ║${RESET}"
+        
+        echo -e "${CYAN}║  ${CYAN}[14] ${YELLOW}↩️  步骤回滚功能${RESET}                                       ${CYAN}║${RESET}"
+        echo -e "${CYAN}║  ${CYAN}[15] ${GREEN}🛡️  数据备份恢复${RESET}                                       ${CYAN}║${RESET}"
+        
+        echo -e "${CYAN}║                                                                              ║${RESET}"
+        echo -e "${CYAN}║  ${WHITE}└─────────────────────────────────────┘${RESET}                               ${CYAN}║${RESET}"
+        echo -e "${CYAN}║                                                                              ║${RESET}"
+        
+        echo -e "${CYAN}║  ${CYAN}[0] ${GRAY}🔙 返回主菜单${RESET}                                           ${CYAN}║${RESET}"
+        echo -e "${CYAN}║                                                                              ║${RESET}"
+        echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════════════════╝${RESET}"
+        
+        echo -ne "${YELLOW}${ICON_WARN} 请输入选项 (0-15) : ${RESET}"
         read -r choice
         
         case "$choice" in
-            1)
-                print_header
-                echo -e "${CYAN}════════════════════════════════════════════${RESET}"
-                echo -e "${WHITE}          容器状态检查${RESET}"
-                echo -e "${CYAN}════════════════════════════════════════════${RESET}"
-                check_container_status "astrbot"
-                check_container_status "napcat"
-                echo -e "\n${GREEN}按任意键继续...${RESET}"
-                read -p ""
-                ;;
-            2)
-                print_header
-                monitor_system_resources
-                echo -e "\n${GREEN}按任意键继续...${RESET}"
-                read -p ""
-                ;;
-            3)
-                print_header
+            1) show_container_details ;;
+            2) show_container_logs ;;
+            3) restart_containers ;;
+            4) clean_containers ;;
+            5) 
                 test_network_connectivity
-                echo -e "\n${GREEN}按任意键继续...${RESET}"
+                echo -e "\n${GREEN}按任意键返回菜单...${RESET}"
                 read -p ""
                 ;;
-            4)
-                print_header
-                check_version_compatibility
-                echo -e "\n${GREEN}按任意键继续...${RESET}"
-                read -p ""
-                ;;
-            5)
-                while true; do
-                    print_header
-                    echo -e "${CYAN}════════════════════════════════════════════${RESET}"
-                    echo -e "${WHITE}          步骤回滚功能${RESET}"
-                    echo -e "${CYAN}════════════════════════════════════════════${RESET}"
-                    
-                    echo -e "${RED}${ICON_WARN} 警告：回滚操作将删除相关配置和容器！${RESET}"
-                    echo ""
-                    echo -e "${WHITE}  1${RESET} ${RED}回滚网络配置${RESET}"
-                    echo -e "${WHITE}  2${RESET} ${RED}回滚Docker安装${RESET}"
-                    echo -e "${WHITE}  3${RESET} ${RED}回滚AstrBot部署${RESET}"
-                    echo -e "${WHITE}  4${RESET} ${RED}回滚NapCat部署${RESET}"
-                    echo -e "${WHITE}  0${RESET} ${GRAY}返回扩展菜单${RESET}"
-                    
-                    echo -ne "\n${YELLOW}选择要回滚的步骤（0-4）: ${RESET}"
-                    read -r rollback_choice
-                    
-                    case "$rollback_choice" in
-                        1|2|3|4)
-                            if confirm_action "确认回滚步骤 $rollback_choice？此操作不可逆！"; then
-                                rollback_step "$rollback_choice"
-                                echo -e "\n${GREEN}按任意键继续...${RESET}"
-                                read -p ""
-                            fi
-                            ;;
-                        0)
-                            break
-                            ;;
-                        *)
-                            echo -e "${RED}无效选择！${RESET}"
-                            sleep 1
-                            ;;
-                    esac
-                done
-                ;;
-            6)
-                print_header
+            6) fix_dns_configuration ;;
+            7) show_network_speed ;;
+            8) 
                 check_shared_directory
-                echo -e "\n${GREEN}按任意键继续...${RESET}"
+                echo -e "\n${GREEN}按任意键返回菜单...${RESET}"
                 read -p ""
                 ;;
-            7)
-                print_header
+            9) 
                 test_shared_folder
-                echo -e "\n${GREEN}按任意键继续...${RESET}"
+                echo -e "\n${GREEN}按任意键返回菜单...${RESET}"
                 read -p ""
                 ;;
-            8)
-                print_header
-                fix_shared_mount
-                echo -e "\n${GREEN}按任意键继续...${RESET}"
+            10) fix_shared_mount ;;
+            11) 
+                monitor_system_resources
+                echo -e "\n${GREEN}按任意键返回菜单...${RESET}"
                 read -p ""
                 ;;
-            9)
-                print_header
-                echo -e "${BLUE}════════════════════════════════════════════${RESET}"
-                echo -e "${WHITE}          提取日志URL${RESET}"
-                echo -e "${BLUE}════════════════════════════════════════════${RESET}"
-                
-                [ "$STEP3_DONE" = false ] && { echo -e "${YELLOW}${ICON_WARN} 需要先部署AstrBot${RESET}"; return; }
-                [ "$STEP4_DONE" = false ] && { echo -e "${YELLOW}${ICON_WARN} 需要先部署NapCat${RESET}"; return; }
-                
-                extract_urls_from_logs "astrbot"
-                echo -e "\n${GRAY}────────────────────────────────────────${RESET}"
-                extract_urls_from_logs "napcat"
-                
-                echo -e "\n${GREEN}按任意键继续...${RESET}"
+            12) 
+                check_version_compatibility
+                echo -e "\n${GREEN}按任意键返回菜单...${RESET}"
                 read -p ""
                 ;;
-            10)
-                print_header
-                check_for_updates
-                ;;
-            11)
-                print_header
-                fix_dns_configuration
-                echo -e "\n${GREEN}按任意键继续...${RESET}"
+            13) 
+                extract_urls_from_logs "both"
+                echo -e "\n${GREEN}按任意键返回菜单...${RESET}"
                 read -p ""
                 ;;
-            0)
-                return
-                ;;
+            14) show_rollback_menu ;;
+            15) show_backup_menu ;;
+            0) return ;;
             *)
-                echo -e "${RED}无效选择！${RESET}"
+                echo -e "\n${RED}❌ 无效选择！${RESET}"
                 sleep 1
                 ;;
         esac
@@ -2022,34 +2431,44 @@ show_extended_menu() {
 
 # ===================== 主菜单 =====================
 show_main_menu() {
-    print_header
-    print_status
-    
-    echo -e "${CYAN}════════════════════════════════════════════${RESET}"
-    echo -e "${WHITE}          主菜单${RESET}"
-    echo -e "${CYAN}════════════════════════════════════════════${RESET}"
-    
-    echo -e "${WHITE}  1${RESET} ${BLUE}${ICON_NETWORK} 网络配置${RESET}"
-    echo -e "${WHITE}  2${RESET} ${BLUE}${ICON_DOCKER} 安装Docker${RESET}"
-    echo -e "${WHITE}  3${RESET} ${BLUE}${ICON_BOT} 部署AstrBot${RESET}"
-    echo -e "${WHITE}  4${RESET} ${BLUE}${ICON_CAT} 部署NapCat${RESET}"
-    echo -e "${WHITE}  0${RESET} ${GREEN}${ICON_ROCKET} 一键执行所有${RESET}"
-    echo -e "${WHITE}  e${RESET} ${CYAN}${ICON_GEAR} 扩展功能${RESET}"
-    echo -e "${WHITE}  q${RESET} ${RED}退出脚本${RESET}"
-    
-    print_contact_info
-    
-    print_footer
-    
-    echo -ne "${YELLOW}${ICON_WARN} 请选择（0-4/e/q）: ${RESET}"
-    read -r choice
+    while true; do
+        print_header
+        print_system_status
+        print_deployment_status
+        print_main_menu
+        print_contact_info
+        
+        echo -ne "${YELLOW}${ICON_WARN} 请输入选项 (0-4/E/C/U/Q) : ${RESET}"
+        read -r choice
+        
+        case "$choice" in
+            1) step1 ;;
+            2) step2 ;;
+            3) step3 ;;
+            4) step4 ;;
+            0) run_all ;;
+            e|E) show_extended_menu ;;
+            c|C) show_container_details ;;
+            u|U) check_for_updates ;;
+            q|Q) 
+                echo -e "\n${CYAN}感谢使用，再见！${RESET}"
+                cleanup
+                break
+                ;;
+            *)
+                echo -e "\n${RED}❌ 无效选择！请重新输入${RESET}"
+                sleep 1
+                ;;
+        esac
+    done
 }
+
 
 # ===================== 初始化设置 =====================
 init_script() {
     echo -e "${MAGENTA}"
     echo "╔══════════════════════════════════════════════════════════╗"
-    echo "║              智能部署助手 v2.5.8 初始化                 ║"
+    echo "║              智能部署助手 v2.5.9 初始化                 ║"
     echo "║          修复共享目录矛盾，统一DNS配置                   ║"
     echo "║          优化权限管理，改进更新检测                     ║"
     echo "║          本脚本完全免费，严禁倒卖！                     ║"
