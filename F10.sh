@@ -1,8 +1,8 @@
 #!/bin/bash
 # ===================== 版本信息 =====================
 # 脚本名称: AstrBot+NapCat 智能部署助手
-# 版本号: v2.5.7
-# 最后更新: 2025年12月27日
+# 版本号: v2.5.8
+# 最后更新: 2025年12月26日
 # 功能: 修复共享目录矛盾，统一DNS配置，优化权限管理
 # 声明: 本脚本完全免费，禁止倒卖！
 # 技术支持QQ: 3076737056
@@ -21,14 +21,14 @@ MIN_DISK_SPACE=5
 REQUIRED_DOCKER_VERSION="20.10"
 
 # 共享目录配置 - 修复：统一容器内路径
-SHARED_DIR="/opt/astrbot/shared"
+SHARED_DIR="/vol3/1000/dockerSharedFolder"  
 ASTROBOT_SHARED_PATH="/app/sharedFolder"
 NAPCAT_SHARED_PATH="/app/sharedFolder"
 
 # 更新配置
 UPDATE_CHECK_URL="https://cdn.jsdelivr.net/gh/ygbls/a-n-@main/F10.sh"
 SCRIPT_BASE_URL="https://cdn.jsdelivr.net/gh/ygbls/a-n-@main/version.txt"
-CURRENT_VERSION="v2.5.7"
+CURRENT_VERSION="v2.5.8"
 
 # ===================== 颜色定义 =====================
 RED='\033[1;31m'
@@ -232,133 +232,20 @@ extract_urls_from_logs() {
     local container_name=$1
     echo -e "\n${CYAN}${ICON_LINK} 从 $container_name 日志提取URL${RESET}"
     
-    # 检查容器是否存在
     if ! docker ps -a --format "{{.Names}}" | grep -q "^${container_name}$"; then
         echo -e "${RED}${ICON_CROSS} 容器 $container_name 不存在${RESET}"
-        
-        # 询问用户是否要部署容器
-        echo -e "${YELLOW}${ICON_WARN} 是否要部署 $container_name 容器？${RESET}"
-        read -p "请输入选择 [y/N]: " deploy_choice
-        
-        if [[ "$deploy_choice" =~ ^[Yy]$ ]]; then
-            case "$container_name" in
-                "astrbot")
-                    if confirm_action "部署AstrBot容器"; then
-                        step3
-                        # 等待容器启动
-                        echo -e "${CYAN}${ICON_LOAD} 等待容器启动...${RESET}"
-                        sleep 5
-                    else
-                        echo -e "${GRAY}操作已取消${RESET}"
-                        return 1
-                    fi
-                    ;;
-                "napcat")
-                    if confirm_action "部署NapCat容器"; then
-                        step4
-                        # 等待容器启动
-                        echo -e "${CYAN}${ICON_LOAD} 等待容器启动...${RESET}"
-                        sleep 5
-                    else
-                        echo -e "${GRAY}操作已取消${RESET}"
-                        return 1
-                    fi
-                    ;;
-                *)
-                    echo -e "${RED}未知容器类型${RESET}"
-                    return 1
-                    ;;
-            esac
-        else
-            return 1
-        fi
+        return 1
     fi
     
-    # 检查容器是否在运行
-    local container_state=$(docker inspect -f '{{.State.Status}}' "$container_name" 2>/dev/null || echo "unknown")
-    
-    if [ "$container_state" != "running" ]; then
-        echo -e "${YELLOW}${ICON_WARN} 容器 $container_name 状态: $container_state${RESET}"
-        
-        # 询问是否启动容器
-        echo -e "${YELLOW}${ICON_WARN} 是否要启动 $container_name 容器？${RESET}"
-        read -p "请输入选择 [y/N]: " start_choice
-        
-        if [[ "$start_choice" =~ ^[Yy]$ ]]; then
-            echo -e "${CYAN}${ICON_LOAD} 启动 $container_name 容器...${RESET}"
-            if docker start "$container_name" >/dev/null 2>&1; then
-                echo -e "${GREEN}${ICON_CHECK} 容器启动成功${RESET}"
-                # 等待容器完全启动
-                echo -e "${CYAN}${ICON_LOAD} 等待容器初始化...${RESET}"
-                sleep 8
-            else
-                echo -e "${RED}${ICON_CROSS} 容器启动失败${RESET}"
-                return 1
-            fi
-        else
-            echo -e "${GRAY}操作已取消${RESET}"
-            return 1
-        fi
-    fi
-    
-    # 检查容器是否有日志
-    local log_size=$(docker logs "$container_name" 2>&1 | wc -l)
-    if [ "$log_size" -eq 0 ]; then
-        echo -e "${YELLOW}${ICON_WARN} 容器日志为空，等待5秒后重试...${RESET}"
-        sleep 5
-        log_size=$(docker logs "$container_name" 2>&1 | wc -l)
-        if [ "$log_size" -eq 0 ]; then
-            echo -e "${YELLOW}${ICON_WARN} 容器日志仍然为空，可能容器刚启动或没有输出${RESET}"
-            echo -e "${CYAN}尝试显示最近10条日志:${RESET}"
-            docker logs --tail 10 "$container_name" 2>/dev/null || echo "无法获取日志"
-            return 1
-        fi
-    fi
-    
-    echo -e "${CYAN}${ICON_INFO} 正在从容器日志中提取URL...${RESET}"
-    
-    # 使用timeout防止卡住
-    local urls=$(timeout 15 docker logs "$container_name" 2>&1 | grep -Eo 'https?://[^"[:space:]]+' | sort -u)
+    local urls=$(timeout 10 docker logs "$container_name" 2>/dev/null | grep -Eo 'https?://[^"[:space:]]+' | sort -u)
     
     if [ -n "$urls" ]; then
-        local url_count=$(echo "$urls" | wc -l)
-        echo -e "${GREEN}${ICON_CHECK} 找到 ${url_count} 个URL:${RESET}"
-        echo ""
-        echo "$urls" | head -20  # 显示前20个URL
-        if [ "$url_count" -gt 20 ]; then
-            echo -e "${CYAN}... 还有 $((url_count - 20)) 个URL未显示${RESET}"
-        fi
-        
-        # 保存到文件
+        echo "$urls"
         local url_file="${LOG_DIR}/${container_name}_urls_$(date +%Y%m%d_%H%M%S).txt"
         echo "$urls" > "$url_file"
-        echo -e "\n${GREEN}${ICON_CHECK} URL已保存到: $url_file${RESET}"
-        
-        # 询问是否要复制到共享目录
-        if [ -d "$SHARED_DIR" ]; then
-            echo -e "${CYAN}${ICON_INFO} 是否将URL列表复制到共享目录？${RESET}"
-            read -p "请输入选择 [y/N]: " copy_choice
-            
-            if [[ "$copy_choice" =~ ^[Yy]$ ]]; then
-                cp "$url_file" "$SHARED_DIR/"
-                echo -e "${GREEN}${ICON_CHECK} 已复制到共享目录: $SHARED_DIR/$(basename "$url_file")${RESET}"
-            fi
-        fi
-        
-        return 0
+        echo -e "${GREEN}${ICON_CHECK} URL已保存到: $url_file${RESET}"
     else
-        echo -e "${YELLOW}${ICON_WARN} 未找到URL${RESET}"
-        
-        # 显示一些日志帮助用户了解情况
-        echo -e "\n${CYAN}最近的日志输出（最后5行）:${RESET}"
-        docker logs --tail 5 "$container_name" 2>/dev/null || echo "无法获取日志"
-        
-        echo -e "\n${YELLOW}${ICON_WARN} 可能原因:${RESET}"
-        echo -e "  1. 容器刚启动，还没有生成URL"
-        echo -e "  2. 容器日志中没有URL格式的内容"
-        echo -e "  3. 容器可能需要重新配置"
-        
-        return 1
+        echo -e "${YELLOW}${ICON_WARN} 未找到URL或读取超时${RESET}"
     fi
 }
 
@@ -523,15 +410,8 @@ setup_shared_directory() {
     # 创建共享目录
     mkdir -p "$SHARED_DIR"
     
-    # 设置更安全的权限：775（所有者可读写执行，组可读执行，其他用户只读）
-    chmod 775 "$SHARED_DIR"
-    
-    # 设置当前用户和docker组为所有者
-    if id -u docker >/dev/null 2>&1; then
-        chown $(id -u):docker "$SHARED_DIR"
-    else
-        chown $(id -u):$(id -g) "$SHARED_DIR"
-    fi
+    # 设置更安全的权限：777（所有用户可读写执行）
+    chmod -R 777 "$SHARED_DIR"
     
     echo -e "${GREEN}${ICON_CHECK} 共享目录已创建: ${WHITE}$SHARED_DIR${RESET}"
     echo -e "${GRAY}权限: $(ls -ld "$SHARED_DIR" | awk '{print $1}')${RESET}"
@@ -602,8 +482,8 @@ test_shared_folder() {
     fi
     
     # 创建测试文件
-    local test_file="$SHARED_DIR/shared_test_$(date +%s).txt"
-    local test_content="共享文件夹测试 $(date)"
+    local test_file="$SHARED_DIR/mount_test.txt"
+    local test_content="这是挂载测试文件"
     
     echo -e "${WHITE}在宿主机创建测试文件...${RESET}"
     echo "$test_content" > "$test_file"
@@ -615,8 +495,7 @@ test_shared_folder() {
     # 测试NapCat
     if $napcat_exists; then
         echo -e "\n${WHITE}测试NapCat容器读取...${RESET}"
-        local napcat_result=$(docker exec napcat cat "$NAPCAT_SHARED_PATH/$(basename "$test_file")" 2>/dev/null)
-        if echo "$napcat_result" | grep -q "$test_content"; then
+        if docker exec napcat test -f "/app/sharedFolder/$(basename "$test_file")" 2>/dev/null; then
             echo -e "${GREEN}${ICON_CHECK} NapCat可以读取共享文件${RESET}"
             napcat_ok=true
         else
@@ -640,8 +519,7 @@ test_shared_folder() {
     # 测试AstrBot
     if $astrbot_exists; then
         echo -e "\n${WHITE}测试AstrBot容器读取...${RESET}"
-        local astrbot_result=$(docker exec astrbot cat "$ASTROBOT_SHARED_PATH/$(basename "$test_file")" 2>/dev/null)
-        if echo "$astrbot_result" | grep -q "$test_content"; then
+        if docker exec astrbot test -f "/app/sharedFolder/$(basename "$test_file")" 2>/dev/null; then
             echo -e "${GREEN}${ICON_CHECK} AstrBot可以读取共享文件${RESET}"
             astrbot_ok=true
         else
@@ -685,7 +563,7 @@ test_shared_folder() {
         echo -e "${YELLOW}两个容器都无法访问共享目录${RESET}"
         echo -e "\n${YELLOW}解决方案:${RESET}"
         echo -e "  1. 重新部署两个容器"
-        echo -e "  2. 检查共享目录权限: chmod 775 $SHARED_DIR"
+        echo -e "  2. 检查共享目录权限: chmod -R 777 $SHARED_DIR"
         echo -e "  3. 手动检查容器挂载: docker inspect <容器名>"
         echo -e "  4. 运行扩展功能中的修复工具"
     fi
@@ -756,7 +634,7 @@ fix_shared_mount() {
         docker run -d \
             -p 6180-6200:6180-6200 \
             -p 11451:11451 \
-            -v "$SHARED_DIR:$ASTROBOT_SHARED_PATH" \
+            -v "$SHARED_DIR:/app/sharedFolder" \
             -v "$(pwd)/astrbot/data:/AstrBot/data" \
             -v /etc/localtime:/etc/localtime:ro \
             --name astrbot \
@@ -771,12 +649,10 @@ fix_shared_mount() {
         
         # 重新运行NapCat（带共享目录挂载）
         docker run -d \
-            -e NAPCAT_GID=$(id -g) \
-            -e NAPCAT_UID=$(id -u) \
             -p 3000:3000 \
             -p 3001:3001 \
             -p 6099:6099 \
-            -v "$SHARED_DIR:$NAPCAT_SHARED_PATH" \
+            -v "$SHARED_DIR:/app/sharedFolder" \
             -v "$(pwd)/napcat/data:/app/data" \
             -v /etc/localtime:/etc/localtime:ro \
             --name napcat \
@@ -1175,10 +1051,10 @@ show_update_changelog() {
     echo -e "${WHITE}           更新日志${RESET}"
     echo -e "${CYAN}════════════════════════════════════════════${RESET}"
     
-    echo -e "${GREEN}v2.5.7 (2025-12-26)${RESET}"
+    echo -e "${GREEN}v2.5.8 (2025-12-26)${RESET}"
     echo -e "  • 修复共享目录路径矛盾"
     echo -e "  • 统一DNS配置为8.8.8.8, 114.114.114.114, 223.5.5.5, 1.1.1.1"
-    echo -e "  • 改进共享目录权限管理（775替代777）"
+    echo -e "  • 改进共享目录权限管理（777权限）"
     echo -e "  • 优化容器重启策略为always"
     echo -e "  • 移除重复的警告提示"
     echo -e "  • 修复更新检测逻辑"
@@ -1254,7 +1130,7 @@ show_manual_update_guide() {
 print_header() {
     clear
     echo -e "${MAGENTA}════════════════════════════════════════════════════════════════${RESET}"
-    echo -e "${CYAN}  ╔═╗╔═╗╔╦╗╔═╗╦═╗╔╦╗  ╔═╗╔═╗╔╦╗  ${WHITE}智能部署助手 v2.5.7${RESET}"
+    echo -e "${CYAN}  ╔═╗╔═╗╔╦╗╔═╗╦═╗╔╦╗  ╔═╗╔═╗╔╦╗  ${WHITE}智能部署助手 v2.5.8${RESET}"
     echo -e "${CYAN}  ║╣ ║ ║║║║║╣ ╠╦╝ ║   ╠═╝║ ║║║║  ${GRAY}AstrBot + NapCat${RESET}"
     echo -e "${CYAN}  ╚═╝╚═╝╩ ╩╚═╝╩╚═ ╩   ╩  ╚═╝╩ ╩  ${YELLOW}修复优化版${RESET}"
     echo -e "${MAGENTA}════════════════════════════════════════════════════════════════${RESET}"
@@ -1409,7 +1285,6 @@ install_docker() {
         printf "\r\033[K"
         echo -e "${YELLOW}${ICON_WARN} apt缓存更新遇到错误${RESET}"
     fi
-    show_progress 1 15
     
     # ===================== 步骤2: 修改系统镜像源 =====================
     echo -e "\n${CYAN}[2/15] 修改系统镜像源...${RESET}"
@@ -1443,7 +1318,6 @@ deb-src http://mirrors.aliyun.com/ubuntu/ noble-backports main restricted univer
 EOF
     
     echo -e "${GREEN}${ICON_CHECK} 系统镜像源已修改为阿里云${RESET}"
-    show_progress 2 15
     
     # ===================== 步骤3: 安装依赖工具 =====================
     echo -e "\n${CYAN}[3/15] 安装依赖工具...${RESET}"
@@ -1455,7 +1329,6 @@ EOF
     else
         echo -e "${YELLOW}${ICON_WARN} 依赖工具安装遇到错误${RESET}"
     fi
-    show_progress 3 15
     
     # 询问是否继续
     if ! confirm_action "继续安装Docker？"; then
@@ -1480,7 +1353,6 @@ EOF
         curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
         apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 7EA0A9C3F273FCD8 2>&1 | tee -a "$gpg_log"
     fi
-    show_progress 4 15
     
     # ===================== 步骤5: 添加Docker官方源 =====================
     echo -e "\n${CYAN}[5/15] 添加Docker官方源...${RESET}"
@@ -1493,7 +1365,6 @@ EOF
     
     echo -e "${GREEN}${ICON_CHECK} Docker官方源添加完成${RESET}"
     echo -e "${GRAY}系统版本: $codename${RESET}"
-    show_progress 5 15
     
     # ===================== 步骤6: 修正Docker源签名配置 =====================
     echo -e "\n${CYAN}[6/15] 修正Docker源签名配置...${RESET}"
@@ -1508,7 +1379,6 @@ EOF
     else
         echo -e "${YELLOW}${ICON_WARN} Docker源文件不存在${RESET}"
     fi
-    show_progress 6 15
     
     # ===================== 步骤7: 更新apt包索引 =====================
     echo -e "\n${CYAN}[7/15] 更新apt包索引...${RESET}"
@@ -1525,7 +1395,6 @@ EOF
         printf "\r\033[K"
         echo -e "${YELLOW}${ICON_WARN} apt包索引更新遇到错误${RESET}"
     fi
-    show_progress 7 15
     
     # ===================== 步骤8: 安装Docker组件 =====================
     echo -e "\n${CYAN}[8/15] 安装Docker组件...${RESET}"
@@ -1546,7 +1415,6 @@ EOF
         echo -e "${YELLOW}查看日志: $install_log${RESET}"
         return 1
     fi
-    show_progress 8 15
     
     # ===================== 步骤9: 配置Docker镜像源 =====================
     echo -e "\n${CYAN}[9/15] 配置Docker镜像源...${RESET}"
@@ -1584,7 +1452,6 @@ EOF
     
     echo -e "${GREEN}${ICON_CHECK} Docker镜像源配置完成${RESET}"
     echo -e "${GRAY}镜像源数量: $(grep -c "https://" /etc/docker/daemon.json) 个${RESET}"
-    show_progress 9 15
     
     # ===================== 步骤10: 启动Docker服务 =====================
     echo -e "\n${CYAN}[10/15] 启动Docker服务...${RESET}"
@@ -1596,7 +1463,6 @@ EOF
         echo -e "${YELLOW}查看日志: $service_log${RESET}"
         return 1
     fi
-    show_progress 10 15
     
     # ===================== 步骤11: 设置开机自启 =====================
     echo -e "\n${CYAN}[11/15] 设置Docker开机自启...${RESET}"
@@ -1605,7 +1471,6 @@ EOF
     else
         echo -e "${YELLOW}${ICON_WARN} Docker开机自启设置失败${RESET}"
     fi
-    show_progress 11 15
     
     # ===================== 步骤12: 重启Docker服务 =====================
     echo -e "\n${CYAN}[12/15] 重启Docker服务应用配置...${RESET}"
@@ -1614,7 +1479,6 @@ EOF
     else
         echo -e "${YELLOW}${ICON_WARN} Docker服务重启失败${RESET}"
     fi
-    show_progress 12 15
     
     # ===================== 步骤13: 测试Docker安装 =====================
     echo -e "\n${CYAN}[13/15] 测试Docker安装...${RESET}"
@@ -1627,7 +1491,6 @@ EOF
     else
         echo -e "${YELLOW}${ICON_WARN} Docker测试输出异常${RESET}"
     fi
-    show_progress 13 15
     
     # ===================== 步骤14: 验证安装 =====================
     echo -e "\n${CYAN}[14/15] 验证Docker安装...${RESET}"
@@ -1642,7 +1505,6 @@ EOF
     else
         echo -e "${RED}${ICON_CROSS} Docker服务运行状态: ${WHITE}未运行${RESET}"
     fi
-    show_progress 14 15
     
     # ===================== 步骤15: 清理和总结 =====================
     echo -e "\n${CYAN}[15/15] 清理和总结...${RESET}"
@@ -1676,7 +1538,6 @@ uninstall_docker() {
     systemctl stop docker 2>/dev/null
     systemctl stop docker.socket 2>/dev/null
     echo -e "${GREEN}${ICON_CHECK} Docker服务已停止${RESET}"
-    show_progress 1 5
     
     # 卸载Docker包
     echo -e "\n${CYAN}[2/5] 卸载Docker软件包...${RESET}"
@@ -1692,7 +1553,6 @@ uninstall_docker() {
     
     echo "$uninstall_output" | tail -10
     echo -e "${GREEN}${ICON_CHECK} Docker软件包已卸载${RESET}"
-    show_progress 2 5
     
     # 删除Docker相关文件
     echo -e "\n${CYAN}[3/5] 删除Docker相关文件...${RESET}"
@@ -1703,13 +1563,11 @@ uninstall_docker() {
     rm -rf /etc/apt/trusted.gpg.d/docker.gpg
     rm -f /etc/apt/sources.list.d/docker.list
     echo -e "${GREEN}${ICON_CHECK} Docker相关文件已删除${RESET}"
-    show_progress 3 5
     
     # 清理未使用的依赖
     echo -e "\n${CYAN}[4/5] 清理未使用的依赖...${RESET}"
     apt-get autoremove -y 2>&1 | tee -a "$uninstall_log"
     echo -e "${GREEN}${ICON_CHECK} 依赖清理完成${RESET}"
-    show_progress 4 5
     
     # 验证卸载
     echo -e "\n${CYAN}[5/5] 验证卸载结果...${RESET}"
@@ -1726,92 +1584,12 @@ uninstall_docker() {
         echo -e "${GREEN}${ICON_CHECK} /var/lib/docker 目录已删除${RESET}"
     fi
     
-    show_progress 5 5
-    
     echo -e "\n${GREEN}════════════════════════════════════════════${RESET}"
     echo -e "${WHITE}          Docker卸载完成！${RESET}"
     echo -e "${GREEN}════════════════════════════════════════════${RESET}"
     echo -e "${WHITE}卸载日志: ${GRAY}$uninstall_log${RESET}"
     echo -e "\n${GREEN}按任意键继续...${RESET}"
     read -p ""
-}
-# ===================== 镜像源检测函数 =====================
-detect_fastest_mirror() {
-    local image_name="$1"
-    local original_image="$2"
-    local mirrors=()
-    
-    echo -e "${CYAN}${ICON_SEARCH} 检测最快的Docker镜像源...${RESET}"
-    
-    # 定义镜像源列表
-    if [[ "$image_name" == "astrbot" ]]; then
-        mirrors=(
-            "docker.io/soulter/astrbot:latest"
-            "registry.cn-hangzhou.aliyuncs.com/soulter/astrbot:latest"
-            "registry.cn-shanghai.aliyuncs.com/soulter/astrbot:latest"
-            "registry.cn-beijing.aliyuncs.com/soulter/astrbot:latest"
-            "mirror.ccs.tencentyun.com/soulter/astrbot:latest"
-            "hub-mirror.c.163.com/soulter/astrbot:latest"
-        )
-    elif [[ "$image_name" == "napcat" ]]; then
-        mirrors=(
-            "docker.io/mlikiowa/napcat-docker:latest"
-            "registry.cn-hangzhou.aliyuncs.com/mlikiowa/napcat-docker:latest"
-            "registry.cn-shanghai.aliyuncs.com/mlikiowa/napcat-docker:latest"
-            "registry.cn-beijing.aliyuncs.com/mlikiowa/napcat-docker:latest"
-            "mirror.ccs.tencentyun.com/mlikiowa/napcat-docker:latest"
-            "hub-mirror.c.163.com/mlikiowa/napcat-docker:latest"
-        )
-    else
-        echo -e "${YELLOW}${ICON_WARN} 未知的镜像类型，使用默认镜像源${RESET}"
-        echo "$original_image"
-        return
-    fi
-    
-    local fastest_mirror=""
-    local fastest_time=999999
-    local total_mirrors=${#mirrors[@]}
-    local current=1
-    
-    echo -e "${CYAN}测试 ${total_mirrors} 个镜像源，请稍候...${RESET}"
-    
-    # 测试每个镜像源的速度
-    for mirror in "${mirrors[@]}"; do
-        echo -ne "\r${CYAN}[${current}/${total_mirrors}] 测试 ${mirror}${RESET}"
-        
-        # 使用timeout限制测试时间，最多30秒
-        local start_time=$(date +%s%N)
-        
-        # 尝试拉取镜像的第一个layer（小数据量测试）
-        if timeout 30 docker pull "$mirror" --disable-content-trust >/dev/null 2>&1; then
-            local end_time=$(date +%s%N)
-            local duration=$(( (end_time - start_time) / 1000000 ))  # 转换为毫秒
-            
-            # 计算速度（毫秒越小越快）
-            if [ $duration -lt $fastest_time ]; then
-                fastest_time=$duration
-                fastest_mirror="$mirror"
-                echo -ne " ${GREEN}${duration}ms${RESET}"
-            else
-                echo -ne " ${YELLOW}${duration}ms${RESET}"
-            fi
-        else
-            echo -ne " ${RED}失败${RESET}"
-        fi
-        
-        ((current++))
-        sleep 1  # 避免请求太密集
-    done
-    
-    echo -e "\n"
-    
-    if [ -n "$fastest_mirror" ]; then
-        echo -e "${GREEN}${ICON_CHECK} 最快的镜像源: ${fastest_mirror} (${fastest_time}ms)${RESET}"
-        echo "$fastest_mirror"
-    else
-        echo -e "${YELLOW}${ICON_WARN} 所有镜像源测试失败，使用默认镜像源${RESET}"
-        echo "$original_image"
-    fi
 }
 
 step3() {
@@ -1900,7 +1678,7 @@ step3() {
     if docker run -d \
         -p 6180-6200:6180-6200 \
         -p 11451:11451 \
-        -v "$SHARED_DIR:$ASTROBOT_SHARED_PATH" \
+        -v "$SHARED_DIR:/app/sharedFolder" \
         -v "$(pwd)/astrbot/data:/AstrBot/data" \
         -v /etc/localtime:/etc/localtime:ro \
         --name astrbot \
@@ -1915,7 +1693,7 @@ step3() {
         local ip_address=$(hostname -I | awk '{print $1}' 2>/dev/null || echo "localhost")
         echo -e "\n${CYAN}访问地址:${RESET}"
         echo -e "  ${WHITE}Web界面: http://${ip_address}:6180${RESET}"
-        echo -e "  ${WHITE}共享目录: ${SHARED_DIR} -> ${ASTROBOT_SHARED_PATH}${RESET}"
+        echo -e "  ${WHITE}共享目录: ${SHARED_DIR} -> /app/sharedFolder${RESET}"
         
     else
         echo -e "${RED}${ICON_CROSS} AstrBot启动失败${RESET}"
@@ -2011,12 +1789,10 @@ step4() {
     
     echo -e "${CYAN}${ICON_LOAD} 启动NapCat容器...${RESET}"
     if docker run -d \
-        -e NAPCAT_GID=$(id -g) \
-        -e NAPCAT_UID=$(id -u) \
         -p 3000:3000 \
         -p 3001:3001 \
         -p 6099:6099 \
-        -v "$SHARED_DIR:$NAPCAT_SHARED_PATH" \
+        -v "$SHARED_DIR:/app/sharedFolder" \
         -v "$(pwd)/napcat/data:/app/data" \
         -v /etc/localtime:/etc/localtime:ro \
         --name napcat \
@@ -2031,7 +1807,7 @@ step4() {
         local ip_address=$(hostname -I | awk '{print $1}' 2>/dev/null || echo "localhost")
         echo -e "\n${CYAN}访问地址:${RESET}"
         echo -e "  ${WHITE}Web界面: http://${ip_address}:3000${RESET}"
-        echo -e "  ${WHITE}共享目录: ${SHARED_DIR} -> ${NAPCAT_SHARED_PATH}${RESET}"
+        echo -e "  ${WHITE}共享目录: ${SHARED_DIR} -> /app/sharedFolder${RESET}"
         
     else
         echo -e "${RED}${ICON_CROSS} NapCat启动失败${RESET}"
@@ -2087,7 +1863,7 @@ run_all() {
     echo -e "  ${ICON_CAT} NapCat:  ${WHITE}http://${ip_address}:3000${RESET}"
     echo -e "\n${CYAN}共享目录:${RESET}"
     echo -e "  ${ICON_FOLDER} 宿主机: ${WHITE}$SHARED_DIR${RESET}"
-    echo -e "  ${ICON_FOLDER} 容器内: ${WHITE}$ASTROBOT_SHARED_PATH${RESET}"
+    echo -e "  ${ICON_FOLDER} 容器内: ${WHITE}/app/sharedFolder${RESET}"
     
     echo -e "\n${CYAN}${ICON_INFO} 测试共享文件夹功能...${RESET}"
     test_shared_folder
@@ -2213,44 +1989,12 @@ show_extended_menu() {
                 echo -e "${WHITE}          提取日志URL${RESET}"
                 echo -e "${BLUE}════════════════════════════════════════════${RESET}"
                 
-                # 显示选择菜单
-                echo -e "${CYAN}选择要提取URL的容器:${RESET}"
-                echo -e "${WHITE}  1${RESET} ${GREEN}提取AstrBot日志URL${RESET}"
-                echo -e "${WHITE}  2${RESET} ${GREEN}提取NapCat日志URL${RESET}"
-                echo -e "${WHITE}  3${RESET} ${CYAN}提取两个容器日志URL${RESET}"
-                echo -e "${WHITE}  0${RESET} ${GRAY}返回${RESET}"
+                [ "$STEP3_DONE" = false ] && { echo -e "${YELLOW}${ICON_WARN} 需要先部署AstrBot${RESET}"; return; }
+                [ "$STEP4_DONE" = false ] && { echo -e "${YELLOW}${ICON_WARN} 需要先部署NapCat${RESET}"; return; }
                 
-                echo -ne "\n${YELLOW}请选择（0-3）: ${RESET}"
-                read -r url_choice
-                
-                case "$url_choice" in
-                    1)
-                        echo -e "\n${CYAN}════════════════════════════════════════════${RESET}"
-                        echo -e "${WHITE}          提取AstrBot日志URL${RESET}"
-                        echo -e "${CYAN}════════════════════════════════════════════${RESET}"
-                        extract_urls_from_logs "astrbot"
-                        ;;
-                    2)
-                        echo -e "\n${CYAN}════════════════════════════════════════════${RESET}"
-                        echo -e "${WHITE}          提取NapCat日志URL${RESET}"
-                        echo -e "${CYAN}════════════════════════════════════════════${RESET}"
-                        extract_urls_from_logs "napcat"
-                        ;;
-                    3)
-                        echo -e "\n${CYAN}════════════════════════════════════════════${RESET}"
-                        echo -e "${WHITE}          提取两个容器日志URL${RESET}"
-                        echo -e "${CYAN}════════════════════════════════════════════${RESET}"
-                        extract_urls_from_logs "astrbot"
-                        echo -e "\n${GRAY}────────────────────────────────────────${RESET}"
-                        extract_urls_from_logs "napcat"
-                        ;;
-                    0)
-                        continue
-                        ;;
-                    *)
-                        echo -e "${RED}无效选择！${RESET}"
-                        ;;
-                esac
+                extract_urls_from_logs "astrbot"
+                echo -e "\n${GRAY}────────────────────────────────────────${RESET}"
+                extract_urls_from_logs "napcat"
                 
                 echo -e "\n${GREEN}按任意键继续...${RESET}"
                 read -p ""
@@ -2305,7 +2049,7 @@ show_main_menu() {
 init_script() {
     echo -e "${MAGENTA}"
     echo "╔══════════════════════════════════════════════════════════╗"
-    echo "║              智能部署助手 v2.5.7 初始化                 ║"
+    echo "║              智能部署助手 v2.5.8 初始化                 ║"
     echo "║          修复共享目录矛盾，统一DNS配置                   ║"
     echo "║          优化权限管理，改进更新检测                     ║"
     echo "║          本脚本完全免费，严禁倒卖！                     ║"
