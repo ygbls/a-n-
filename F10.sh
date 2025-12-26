@@ -1,7 +1,7 @@
 #!/bin/bash
 # ===================== 版本信息 =====================
 # 脚本名称: AstrBot+NapCat 智能部署助手
-# 版本号: v2.6.0
+# 版本号: v2.6.1
 # 最后更新: 2025年12月26日
 # 功能: 修复共享目录矛盾，统一DNS配置，优化权限管理
 # 声明: 本脚本完全免费，禁止倒卖！
@@ -28,7 +28,7 @@ NAPCAT_SHARED_PATH="/app/sharedFolder"
 # 更新配置
 UPDATE_CHECK_URL="https://cdn.jsdelivr.net/gh/ygbls/a-n-@main/F10.sh"
 SCRIPT_BASE_URL="https://cdn.jsdelivr.net/gh/ygbls/a-n-@main/version.txt"
-CURRENT_VERSION="v2.6.0"
+CURRENT_VERSION="v2.6.1"
 
 # ===================== 颜色定义 =====================
 
@@ -47,6 +47,36 @@ PINK='\033[1;95m'
 RESET='\033[0m'
 BOLD='\033[1m'
 
+confirm_action() {
+    local prompt="${1:-确定要执行此操作吗？}"
+    echo -ne "${YELLOW}${ICON_WARN} ${prompt} (y/N): ${RESET}"
+    read -r response
+    [[ "$response" =~ ^[Yy]$ ]]
+}
+
+monitor_speed_mb() {
+    local prev_bytes=0
+    while true; do
+        local current_bytes=$(cat /proc/net/dev | grep "$DEFAULT_IFACE" | awk '{print $2}')
+        local speed_mb=0
+        
+        if [ "$prev_bytes" -gt 0 ]; then
+            local diff_bytes=$((current_bytes - prev_bytes))
+            speed_mb=$(echo "scale=2; $diff_bytes / 1024 / 1024" | bc 2>/dev/null || echo "0")
+        fi
+        
+        printf "\r${CYAN}${ICON_NETWORK} 当前网速: %.2f M/s${RESET}" "$speed_mb"
+        prev_bytes=$current_bytes
+        sleep 1
+    done
+}
+
+safe_kill() {
+    if [ -n "$1" ] && kill -0 "$1" 2>/dev/null; then
+        kill "$1" 2>/dev/null
+        wait "$1" 2>/dev/null
+    fi
+}
 # ===================== 图标定义 =====================
 ICON_CHECK="✓"
 ICON_CROSS="✗"
@@ -409,7 +439,310 @@ show_backup_menu() {
         esac
     done
 }
+create_incremental_backup() {
+    echo -e "\n${YELLOW}${ICON_WARN} 增量备份功能开发中${RESET}"
+    echo -e "${GRAY}此功能将在后续版本中提供${RESET}"
+    read -p "按任意键继续..."
+}
 
+# 恢复部分数据（简化版）
+restore_partial_backup() {
+    echo -e "\n${YELLOW}${ICON_WARN} 部分恢复功能开发中${RESET}"
+    echo -e "${GRAY}此功能将在后续版本中提供${RESET}"
+    read -p "按任意键继续..."
+}
+
+# 验证备份完整性
+verify_backup_integrity() {
+    echo -e "\n${CYAN}${ICON_INFO} 备份完整性验证${RESET}"
+    echo -e "${CYAN}════════════════════════════════════════════${RESET}"
+    
+    local backup_files=($(find "$BACKUP_DIR" -maxdepth 1 -name "*.tar.gz" -o -name "*backup_*" -type d | sort -r))
+    
+    if [ ${#backup_files[@]} -eq 0 ]; then
+        echo -e "${YELLOW}暂无备份文件可验证${RESET}"
+        return
+    fi
+    
+    echo -e "${WHITE}选择要验证的备份:${RESET}\n"
+    
+    for i in "${!backup_files[@]}"; do
+        local idx=$((i+1))
+        local name=$(basename "${backup_files[$i]}")
+        local size=$(du -sh "${backup_files[$i]}" 2>/dev/null | cut -f1)
+        echo -e "  ${CYAN}[$idx] ${name} (${size})${RESET}"
+    done
+    
+    echo -ne "\n${YELLOW}选择备份序号 (0取消): ${RESET}"
+    read -r choice
+    
+    if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -gt 0 ] && [ "$choice" -le ${#backup_files[@]} ]; then
+        verify_single_backup "${backup_files[$((choice-1))]}"
+    else
+        echo -e "${GRAY}取消验证${RESET}"
+    fi
+}
+
+# 显示备份统计信息
+show_backup_stats() {
+    echo -e "\n${CYAN}${ICON_INFO} 备份统计信息${RESET}"
+    echo -e "${CYAN}════════════════════════════════════════════${RESET}"
+    
+    if [ ! -d "$BACKUP_DIR" ]; then
+        echo -e "${YELLOW}备份目录不存在${RESET}"
+        return
+    fi
+    
+    # 统计不同类型备份
+    local full_backups=$(find "$BACKUP_DIR" -maxdepth 1 -name "full_backup_*" -type d | wc -l)
+    local custom_backups=$(find "$BACKUP_DIR" -maxdepth 1 -name "custom_backup_*" -type d | wc -l)
+    local tar_backups=$(find "$BACKUP_DIR" -maxdepth 1 -name "*.tar.gz" | wc -l)
+    local total_backups=$((full_backups + custom_backups + tar_backups))
+    
+    # 计算总大小
+    local total_size=$(du -sh "$BACKUP_DIR" 2>/dev/null | cut -f1)
+    
+    # 最早和最晚备份
+    local oldest="N/A"
+    local newest="N/A"
+    
+    if [ "$total_backups" -gt 0 ]; then
+        oldest=$(find "$BACKUP_DIR" -maxdepth 1 -name "*backup_*" -o -name "*.tar.gz" -printf "%T+\n" 2>/dev/null | sort | head -1 | cut -d'+' -f1)
+        newest=$(find "$BACKUP_DIR" -maxdepth 1 -name "*backup_*" -o -name "*.tar.gz" -printf "%T+\n" 2>/dev/null | sort -r | head -1 | cut -d'+' -f1)
+    fi
+    
+    echo -e "${WHITE}备份统计:${RESET}"
+    echo -e "  完整备份: ${GREEN}${full_backups} 个${RESET}"
+    echo -e "  自定义备份: ${GREEN}${custom_backups} 个${RESET}"
+    echo -e "  压缩包备份: ${GREEN}${tar_backups} 个${RESET}"
+    echo -e "  总计: ${GREEN}${total_backups} 个${RESET}"
+    echo -e "  总大小: ${GREEN}${total_size}${RESET}"
+    echo -e "  最早备份: ${GRAY}${oldest}${RESET}"
+    echo -e "  最新备份: ${GRAY}${newest}${RESET}"
+    
+    # 显示目录使用情况
+    echo -e "\n${WHITE}目录使用情况:${RESET}"
+    df -h "$BACKUP_DIR" | awk 'NR==2 {printf("  可用空间: %s/%s (使用率: %s)\n", $4, $2, $5)}'
+    
+    # 检查备份历史日志
+    if [ -f "$BACKUP_DIR/backup_history.log" ]; then
+        echo -e "\n${WHITE}备份历史记录:${RESET}"
+        tail -5 "$BACKUP_DIR/backup_history.log" | while read line; do
+            echo "  $line"
+        done
+    fi
+    
+    read -p "按任意键继续..."
+}
+
+# 配置备份设置
+configure_backup_settings() {
+    echo -e "\n${CYAN}${ICON_INFO} 备份设置${RESET}"
+    echo -e "${CYAN}════════════════════════════════════════════${RESET}"
+    
+    echo -e "${WHITE}当前设置:${RESET}"
+    echo -e "  备份目录: ${GREEN}$BACKUP_DIR${RESET}"
+    echo -e "  最小磁盘空间: ${GREEN}${MIN_DISK_SPACE}GB${RESET}"
+    
+    echo -e "\n${CYAN}设置选项:${RESET}"
+    echo -e "  ${CYAN}[1] 修改备份目录${RESET}"
+    echo -e "  ${CYAN}[2] 修改最小磁盘空间${RESET}"
+    echo -e "  ${CYAN}[3] 查看自动备份配置${RESET}"
+    echo -e "  ${CYAN}[0] 返回${RESET}"
+    
+    echo -ne "\n${YELLOW}选择操作: ${RESET}"
+    read -r setting_choice
+    
+    case "$setting_choice" in
+        1)
+            echo -ne "\n${YELLOW}输入新的备份目录: ${RESET}"
+            read -r new_dir
+            if [ -n "$new_dir" ]; then
+                BACKUP_DIR="$new_dir"
+                echo -e "${GREEN}备份目录已更新为: $BACKUP_DIR${RESET}"
+                mkdir -p "$BACKUP_DIR"
+            fi
+            ;;
+        2)
+            echo -ne "\n${YELLOW}输入最小磁盘空间(GB): ${RESET}"
+            read -r new_space
+            if [[ "$new_space" =~ ^[0-9]+$ ]]; then
+                MIN_DISK_SPACE="$new_space"
+                echo -e "${GREEN}最小磁盘空间已更新为: ${MIN_DISK_SPACE}GB${RESET}"
+            fi
+            ;;
+        3)
+            echo -e "\n${YELLOW}自动备份功能开发中${RESET}"
+            echo -e "${GRAY}此功能将在后续版本中提供${RESET}"
+            ;;
+    esac
+    
+    read -p "按任意键继续..."
+}
+
+# 提取备份文件
+extract_backup_files() {
+    local backup_path="$1"
+    
+    echo -e "\n${CYAN}提取备份文件${RESET}"
+    echo -e "${CYAN}════════════════════════════════════════════${RESET}"
+    
+    if [[ "$backup_path" == *.tar.gz ]]; then
+        echo -ne "${YELLOW}输入提取目录 (默认: 当前目录): ${RESET}"
+        read -r extract_dir
+        extract_dir="${extract_dir:-.}"
+        
+        mkdir -p "$extract_dir"
+        
+        echo -n "正在解压... "
+        if tar -xzf "$backup_path" -C "$extract_dir" 2>/dev/null; then
+            echo -e "${GREEN}✓${RESET}"
+            echo -e "${GREEN}文件已提取到: $extract_dir${RESET}"
+        else
+            echo -e "${RED}✗ 解压失败${RESET}"
+        fi
+    else
+        echo -e "${YELLOW}只支持 .tar.gz 格式的压缩包提取${RESET}"
+    fi
+    
+    read -p "按任意键继续..."
+}
+
+# 删除备份
+delete_backup() {
+    local backup_path="$1"
+    
+    echo -e "\n${RED}删除备份${RESET}"
+    echo -e "${CYAN}════════════════════════════════════════════${RESET}"
+    
+    local backup_name=$(basename "$backup_path")
+    echo -e "${WHITE}要删除的备份: ${RED}$backup_name${RESET}"
+    
+    if confirm_action "确认删除此备份"; then
+        echo -n "正在删除... "
+        if rm -rf "$backup_path" 2>/dev/null; then
+            echo -e "${GREEN}✓${RESET}"
+            echo -e "${GREEN}备份已删除${RESET}"
+        else
+            echo -e "${RED}✗ 删除失败${RESET}"
+        fi
+    else
+        echo -e "${GRAY}取消删除${RESET}"
+    fi
+    
+    read -p "按任意键继续..."
+}
+
+# ===================== 在备份功能之后清理所有备份的函数 =====================
+cleanup_all_backups() {
+    echo -e "\n${RED}清理所有备份${RESET}"
+    echo -e "${CYAN}════════════════════════════════════════════${RESET}"
+    
+    local backup_count=$(find "$BACKUP_DIR" -maxdepth 1 -name "*.tar.gz" -o -name "*backup_*" -type d | wc -l)
+    
+    if [ "$backup_count" -eq 0 ]; then
+        echo -e "${YELLOW}没有备份文件可清理${RESET}"
+        return
+    fi
+    
+    echo -e "${RED}⚠️  警告：这将删除所有备份文件！${RESET}"
+    echo -e "${WHITE}将删除 ${backup_count} 个备份文件${RESET}"
+    
+    if confirm_action "确认删除所有备份（不可恢复）"; then
+        echo -e "\n${CYAN}正在删除备份文件...${RESET}"
+        
+        find "$BACKUP_DIR" -maxdepth 1 -name "*.tar.gz" -o -name "*backup_*" -type d | while read file; do
+            echo -n "删除 $(basename "$file") ... "
+            rm -rf "$file"
+            echo -e "${GREEN}✓${RESET}"
+        done
+        
+        echo -e "\n${GREEN}所有备份文件已删除${RESET}"
+    else
+        echo -e "${GRAY}取消清理${RESET}"
+    fi
+}
+
+# 清理手动选择
+cleanup_manual_selection() {
+    echo -e "\n${YELLOW}手动选择清理备份${RESET}"
+    echo -e "${CYAN}════════════════════════════════════════════${RESET}"
+    
+    local backup_files=($(find "$BACKUP_DIR" -maxdepth 1 -name "*.tar.gz" -o -name "*backup_*" -type d | sort -r))
+    
+    if [ ${#backup_files[@]} -eq 0 ]; then
+        echo -e "${YELLOW}没有备份文件可清理${RESET}"
+        return
+    fi
+    
+    selected_files=()
+    
+    while true; do
+        echo -e "\n${CYAN}选择要删除的备份:${RESET}"
+        
+        for i in "${!backup_files[@]}"; do
+            local idx=$((i+1))
+            local name=$(basename "${backup_files[$i]}")
+            local size=$(du -sh "${backup_files[$i]}" 2>/dev/null | cut -f1)
+            
+            if [[ " ${selected_files[@]} " =~ " $idx " ]]; then
+                echo -e "  ${GREEN}[${idx}] ✓ ${name} (${size})${RESET}"
+            else
+                echo -e "  ${CYAN}[${idx}]   ${name} (${size})${RESET}"
+            fi
+        done
+        
+        echo -e ""
+        echo -e "  ${GREEN}[D] 删除选中的备份${RESET}"
+        echo -e "  ${CYAN}[C] 清除所有选择${RESET}"
+        echo -e "  ${RED}[Q] 取消返回${RESET}"
+        
+        echo -ne "\n${YELLOW}选择 (编号/D/C/Q): ${RESET}"
+        read -r choice
+        
+        case "$choice" in
+            [1-9]*)
+                if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le ${#backup_files[@]} ]; then
+                    if [[ " ${selected_files[@]} " =~ " $choice " ]]; then
+                        selected_files=("${selected_files[@]/$choice/}")
+                        selected_files=(${selected_files[@]})
+                    else
+                        selected_files+=("$choice")
+                    fi
+                fi
+                ;;
+            d|D)
+                if [ ${#selected_files[@]} -eq 0 ]; then
+                    echo -e "${RED}请至少选择一个备份！${RESET}"
+                    continue
+                fi
+                
+                echo -e "\n${RED}将删除以下备份:${RESET}"
+                for idx in "${selected_files[@]}"; do
+                    echo "  $(basename "${backup_files[$((idx-1))]}")"
+                done
+                
+                if confirm_action "确认删除以上备份"; then
+                    for idx in "${selected_files[@]}"; do
+                        local file="${backup_files[$((idx-1))]}"
+                        echo -n "删除 $(basename "$file") ... "
+                        rm -rf "$file"
+                        echo -e "${GREEN}✓${RESET}"
+                    done
+                    echo -e "\n${GREEN}删除完成${RESET}"
+                fi
+                return
+                ;;
+            c|C)
+                selected_files=()
+                echo -e "${GREEN}已清除所有选择${RESET}"
+                ;;
+            q|Q)
+                return
+                ;;
+        esac
+    done
+}
 # 创建完整备份
 create_full_backup() {
     echo -e "\n${CYAN}${ICON_INFO} 创建完整备份${RESET}"
@@ -2309,7 +2642,7 @@ show_update_changelog() {
     echo -e "${WHITE}           更新日志${RESET}"
     echo -e "${CYAN}════════════════════════════════════════════${RESET}"
 
-    echo -e "${GREEN}v2.6.0 (2025-12-26)${RESET}"
+    echo -e "${GREEN}v2.6.1 (2025-12-26)${RESET}"
     echo -e "  • 完善备份功能"
     echo -e "  • 优化系统提示"
     echo -e "  • 重建UI界面"
@@ -2408,7 +2741,7 @@ print_header() {
     echo -e "${MAGENTA}║  ${CYAN}  ██║  ██║███████║   ██║   ██║  ██║██████╔╝╚██████╔╝   ██║              ${MAGENTA}║${RESET}"
     echo -e "${MAGENTA}║  ${CYAN}  ╚═╝  ╚═╝╚══════╝   ╚═╝   ╚═╝  ╚═╝╚═════╝  ╚═════╝    ╚═╝              ${MAGENTA}║${RESET}"
     echo -e "${MAGENTA}║                                                                              ║${RESET}"
-    echo -e "${MAGENTA}║  ${WHITE}                N a p C a t  智能部署助手  v2.6.0                  ${MAGENTA}║${RESET}"
+    echo -e "${MAGENTA}║  ${WHITE}                N a p C a t  智能部署助手  v2.6.1                  ${MAGENTA}║${RESET}"
     echo -e "${MAGENTA}║  ${GRAY}           修复共享目录矛盾 | 统一DNS配置 | 优化权限管理            ${MAGENTA}║${RESET}"
     echo -e "${MAGENTA}║                                                                              ║${RESET}"
     echo -e "${MAGENTA}╚══════════════════════════════════════════════════════════════════════════════╝${RESET}"
@@ -3421,7 +3754,7 @@ show_main_menu() {
 init_script() {
     echo -e "${MAGENTA}"
     echo "╔══════════════════════════════════════════════════════════╗"
-    echo "║              智能部署助手 v2.6.0 初始化                 ║"
+    echo "║              智能部署助手 v2.6.1 初始化                 ║"
     echo "║          修复共享目录矛盾，统一DNS配置                   ║"
     echo "║          优化权限管理，改进更新检测                     ║"
     echo "║          本脚本完全免费，严禁倒卖！                     ║"
