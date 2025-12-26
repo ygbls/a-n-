@@ -1,4 +1,10 @@
-<img width="1613" height="976" alt="image" src="https://github.com/user-attachments/assets/76a8c6d8-45d4-4108-9d7f-3321cfd01942" />
+<img width="1323" height="1559" alt="image" src="https://github.com/user-attachments/assets/59d5858e-d505-4228-9f9b-42eeb184f212" />
+<img width="1326" height="570" alt="image" src="https://github.com/user-attachments/assets/9cd120a3-fecb-42ac-9635-57bf2fc50788" />
+<img width="1288" height="1519" alt="image" src="https://github.com/user-attachments/assets/9c9e751d-aa82-4e2a-abbf-dbe7c4183f20" />
+
+
+
+
 简介：这是一个astrbot和napcat一键部署的脚本
 怎么使用？
 很简单，下载到服务器里给777权限执行就行了
