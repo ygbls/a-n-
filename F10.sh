@@ -1,9 +1,9 @@
 #!/bin/bash
 # ===================== 版本信息 =====================
 # 脚本名称: AstrBot+NapCat 智能部署助手
-# 版本号: v2.6.2
+# 版本号: v2.6.0
 # 最后更新: 2025年12月26日
-# 功能: 修复共享目录矛盾，统一DNS配置，优化权限管理
+# 功能: 修复日志提取功能，优化菜单布局，完善备份功能
 # 声明: 本脚本完全免费，禁止倒卖！
 # 技术支持QQ: 3076737056
 
@@ -28,7 +28,7 @@ NAPCAT_SHARED_PATH="/app/sharedFolder"
 # 更新配置
 UPDATE_CHECK_URL="https://cdn.jsdelivr.net/gh/ygbls/a-n-@main/F10.sh"
 SCRIPT_BASE_URL="https://cdn.jsdelivr.net/gh/ygbls/a-n-@main/version.txt"
-CURRENT_VERSION="v2.6.2"
+CURRENT_VERSION="v2.6.0"
 
 # ===================== 颜色定义 =====================
 
@@ -47,46 +47,6 @@ PINK='\033[1;95m'
 RESET='\033[0m'
 BOLD='\033[1m'
 
-confirm_action() {
-    local prompt="${1:-确定要执行此操作吗？}"
-    echo -ne "${YELLOW}${ICON_WARN} ${prompt} (y/N): ${RESET}"
-    read -r response
-    [[ "$response" =~ ^[Yy]$ ]]
-}
-
-monitor_speed_mb() {
-    local prev_bytes=0
-    local timeout=300  # 5分钟自动超时
-    local start_time=$(date +%s)
-    
-    while true; do
-        # 检查是否超时
-        local current_time=$(date +%s)
-        if [ $((current_time - start_time)) -ge $timeout ]; then
-            break
-        fi
-        
-        local current_bytes=$(cat /proc/net/dev | grep "$DEFAULT_IFACE" | awk '{print $2}')
-        local speed_mb=0
-        
-        if [ "$prev_bytes" -gt 0 ]; then
-            local diff_bytes=$((current_bytes - prev_bytes))
-            speed_mb=$(echo "scale=2; $diff_bytes / 1024 / 1024" | bc 2>/dev/null || echo "0")
-        fi
-        
-        printf "\r${CYAN}${ICON_NETWORK} 当前网速: %.2f M/s (5分钟后自动停止)${RESET}" "$speed_mb"
-        prev_bytes=$current_bytes
-        sleep 1
-    done
-    printf "\r\033[K"  # 清除行内容
-}
-
-safe_kill() {
-    if [ -n "$1" ] && kill -0 "$1" 2>/dev/null; then
-        kill "$1" 2>/dev/null
-        wait "$1" 2>/dev/null
-    fi
-}
 # ===================== 图标定义 =====================
 ICON_CHECK="✓"
 ICON_CROSS="✗"
@@ -110,6 +70,7 @@ ICON_DISK="💿"
 ICON_UPDATE="🔄"
 ICON_DOWNLOAD="⬇"
 ICON_DNS="📡"
+ICON_PLUGIN="🔌"
 
 # ===================== 全局变量定义 =====================
 STEP1_DONE=false
@@ -232,18 +193,16 @@ show_container_details() {
     read -p ""
 }
 
-# 找到原有的 show_container_logs 函数，替换为以下内容
 show_container_logs() {
     print_header
     echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════════════════╗${RESET}"
-    echo -e "${CYAN}║  ${WHITE}🔍 容器日志查看 - 智能过滤模式                                          ${CYAN}║${RESET}"
+    echo -e "${CYAN}║  ${WHITE}🔍 容器日志查看                                                           ${CYAN}║${RESET}"
     echo -e "${CYAN}╠══════════════════════════════════════════════════════════════════════════════╣${RESET}"
     
-    echo -e "${CYAN}选择要查看的日志类型：${RESET}"
-    echo -e "  ${CYAN}[1] AstrBot 日志 (过滤含6185的网址)${RESET}"
-    echo -e "  ${CYAN}[2] NapCat 日志 (过滤含token/6099的网址)${RESET}"
-    echo -e "  ${CYAN}[3] AstrBot 完整日志${RESET}"
-    echo -e "  ${CYAN}[4] NapCat 完整日志${RESET}"
+    echo -e "${CYAN}选择要查看日志的容器：${RESET}"
+    echo -e "  ${CYAN}[1] AstrBot 日志${RESET}"
+    echo -e "  ${CYAN}[2] NapCat 日志${RESET}"
+    echo -e "  ${CYAN}[3] 两者都查看${RESET}"
     echo -e "  ${CYAN}[0] 返回${RESET}"
     
     echo -ne "${YELLOW}请选择: ${RESET}"
@@ -251,20 +210,18 @@ show_container_logs() {
     
     case "$log_choice" in
         1)
-            echo -e "\n${CYAN}正在获取AstrBot过滤日志...${RESET}"
-            timeout 15 docker logs astrbot --tail=1000 2>/dev/null | grep -Eo 'https?://[^ ]*6185[^ ]*' | sort -u
+            echo -e "\n${CYAN}正在获取AstrBot日志...${RESET}"
+            timeout 10 docker logs astrbot --tail=20 2>/dev/null || echo -e "${YELLOW}无法获取AstrBot日志${RESET}"
             ;;
         2)
-            echo -e "\n${CYAN}正在获取NapCat过滤日志...${RESET}"
-            timeout 15 docker logs napcat --tail=1000 2>/dev/null | grep -Eo 'https?://[^ ]*(token|6099)[^ ]*' | sort -u
+            echo -e "\n${CYAN}正在获取NapCat日志...${RESET}"
+            timeout 10 docker logs napcat --tail=20 2>/dev/null || echo -e "${YELLOW}无法获取NapCat日志${RESET}"
             ;;
         3)
-            echo -e "\n${CYAN}AstrBot完整日志(最近20行):${RESET}"
-            timeout 10 docker logs astrbot --tail=20 2>/dev/null
-            ;;
-        4)
-            echo -e "\n${CYAN}NapCat完整日志(最近20行):${RESET}"
-            timeout 10 docker logs napcat --tail=20 2>/dev/null
+            echo -e "\n${CYAN}AstrBot日志:${RESET}"
+            timeout 5 docker logs astrbot --tail=10 2>/dev/null || echo -e "${YELLOW}无法获取AstrBot日志${RESET}"
+            echo -e "\n${CYAN}NapCat日志:${RESET}"
+            timeout 5 docker logs napcat --tail=10 2>/dev/null || echo -e "${YELLOW}无法获取NapCat日志${RESET}"
             ;;
         *)
             return
@@ -389,1490 +346,430 @@ show_rollback_menu() {
     done
 }
 
-# ===================== 改进的数据备份恢复功能 =====================
-
 show_backup_menu() {
     while true; do
         print_header
         echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════════════════╗${RESET}"
-        echo -e "${CYAN}║  ${WHITE}🛡️  数据备份与恢复管理系统                                              ${CYAN}║${RESET}"
+        echo -e "${CYAN}║  ${WHITE}🛡️  数据备份恢复                                                           ${CYAN}║${RESET}"
         echo -e "${CYAN}╠══════════════════════════════════════════════════════════════════════════════╣${RESET}"
         
-        echo -e "${CYAN}║                                                                              ║${RESET}"
-        echo -e "${CYAN}║  ${WHITE}┌───────────── 备份管理 ─────────────┐${RESET}                               ${CYAN}║${RESET}"
-        echo -e "${CYAN}║                                                                              ║${RESET}"
+        echo -e "\n选择操作："
+        echo -e "  ${CYAN}[1] 创建备份${RESET}"
+        echo -e "  ${CYAN}[2] 恢复备份${RESET}"
+        echo -e "  ${CYAN}[3] 查看备份列表${RESET}"
+        echo -e "  ${CYAN}[4] 备份插件配置${RESET}"
+        echo -e "  ${CYAN}[0] 返回${RESET}"
         
-        echo -e "${CYAN}║  ${CYAN}[1] ${GREEN}📦 创建完整备份${RESET} (包含所有容器和数据)                       ${CYAN}║${RESET}"
-        echo -e "${CYAN}║  ${CYAN}[2] ${GREEN}📋 创建自定义备份${RESET} (选择备份内容)                           ${CYAN}║${RESET}"
-        echo -e "${CYAN}║  ${CYAN}[3] ${GREEN}🔄 创建增量备份${RESET} (仅备份更改内容)                           ${CYAN}║${RESET}"
-        echo -e "${CYAN}║  ${CYAN}[4] ${GREEN}📊 查看备份列表${RESET}                                           ${CYAN}║${RESET}"
-        
-        echo -e "${CYAN}║                                                                              ║${RESET}"
-        echo -e "${CYAN}║  ${WHITE}┌───────────── 恢复管理 ─────────────┐${RESET}                               ${CYAN}║${RESET}"
-        echo -e "${CYAN}║                                                                              ║${RESET}"
-        
-        echo -e "${CYAN}║  ${CYAN}[5] ${YELLOW}↩️  恢复完整备份${RESET}                                         ${CYAN}║${RESET}"
-        echo -e "${CYAN}║  ${CYAN}[6] ${YELLOW}🎯 恢复部分数据${RESET} (选择恢复内容)                           ${CYAN}║${RESET}"
-        echo -e "${CYAN}║  ${CYAN}[7] ${RED}🗑️  清理旧备份${RESET} (自动清理策略)                             ${CYAN}║${RESET}"
-        
-        echo -e "${CYAN}║                                                                              ║${RESET}"
-        echo -e "${CYAN}║  ${WHITE}┌───────────── 工具功能 ─────────────┐${RESET}                               ${CYAN}║${RESET}"
-        echo -e "${CYAN}║                                                                              ║${RESET}"
-        
-        echo -e "${CYAN}║  ${CYAN}[8] ${GREEN}🔍 验证备份完整性${RESET}                                         ${CYAN}║${RESET}"
-        echo -e "${CYAN}║  ${CYAN}[9] ${GREEN}📈 备份统计信息${RESET}                                           ${CYAN}║${RESET}"
-        echo -e "${CYAN}║  ${CYAN}[10] ${GREEN}⚙️  备份设置${RESET} (配置自动备份)                               ${CYAN}║${RESET}"
-        
-        echo -e "${CYAN}║                                                                              ║${RESET}"
-        echo -e "${CYAN}║  ${WHITE}└─────────────────────────────────────┘${RESET}                               ${CYAN}║${RESET}"
-        echo -e "${CYAN}║                                                                              ║${RESET}"
-        
-        echo -e "${CYAN}║  ${CYAN}[0] ${GRAY}🔙 返回主菜单${RESET}                                             ${CYAN}║${RESET}"
-        echo -e "${CYAN}║                                                                              ║${RESET}"
-        echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════════════════╝${RESET}"
-        
-        echo -ne "${YELLOW}${ICON_WARN} 请输入选项 (0-10) : ${RESET}"
+        echo -ne "${YELLOW}请选择: ${RESET}"
         read -r backup_choice
         
         case "$backup_choice" in
-            1) create_full_backup ;;
-            2) create_custom_backup ;;
-            3) create_incremental_backup ;;
-            4) list_backups_detailed ;;
-            5) restore_full_backup ;;
-            6) restore_partial_backup ;;
-            7) cleanup_old_backups ;;
-            8) verify_backup_integrity ;;
-            9) show_backup_stats ;;
-            10) configure_backup_settings ;;
-            0) return ;;
-            *)
-                echo -e "\n${RED}❌ 无效选择！${RESET}"
-                sleep 1
+            1)
+                create_backup
                 ;;
-        esac
-    done
-}
-create_incremental_backup() {
-    echo -e "\n${YELLOW}${ICON_WARN} 增量备份功能开发中${RESET}"
-    echo -e "${GRAY}此功能将在后续版本中提供${RESET}"
-    read -p "按任意键继续..."
-}
-
-# 恢复部分数据（简化版）
-restore_partial_backup() {
-    echo -e "\n${YELLOW}${ICON_WARN} 部分恢复功能开发中${RESET}"
-    echo -e "${GRAY}此功能将在后续版本中提供${RESET}"
-    read -p "按任意键继续..."
-}
-
-# 验证备份完整性
-verify_backup_integrity() {
-    echo -e "\n${CYAN}${ICON_INFO} 备份完整性验证${RESET}"
-    echo -e "${CYAN}════════════════════════════════════════════${RESET}"
-    
-    local backup_files=($(find "$BACKUP_DIR" -maxdepth 1 -name "*.tar.gz" -o -name "*backup_*" -type d | sort -r))
-    
-    if [ ${#backup_files[@]} -eq 0 ]; then
-        echo -e "${YELLOW}暂无备份文件可验证${RESET}"
-        return
-    fi
-    
-    echo -e "${WHITE}选择要验证的备份:${RESET}\n"
-    
-    for i in "${!backup_files[@]}"; do
-        local idx=$((i+1))
-        local name=$(basename "${backup_files[$i]}")
-        local size=$(du -sh "${backup_files[$i]}" 2>/dev/null | cut -f1)
-        echo -e "  ${CYAN}[$idx] ${name} (${size})${RESET}"
-    done
-    
-    echo -ne "\n${YELLOW}选择备份序号 (0取消): ${RESET}"
-    read -r choice
-    
-    if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -gt 0 ] && [ "$choice" -le ${#backup_files[@]} ]; then
-        verify_single_backup "${backup_files[$((choice-1))]}"
-    else
-        echo -e "${GRAY}取消验证${RESET}"
-    fi
-}
-
-# 显示备份统计信息
-show_backup_stats() {
-    echo -e "\n${CYAN}${ICON_INFO} 备份统计信息${RESET}"
-    echo -e "${CYAN}════════════════════════════════════════════${RESET}"
-    
-    if [ ! -d "$BACKUP_DIR" ]; then
-        echo -e "${YELLOW}备份目录不存在${RESET}"
-        return
-    fi
-    
-    # 统计不同类型备份
-    local full_backups=$(find "$BACKUP_DIR" -maxdepth 1 -name "full_backup_*" -type d | wc -l)
-    local custom_backups=$(find "$BACKUP_DIR" -maxdepth 1 -name "custom_backup_*" -type d | wc -l)
-    local tar_backups=$(find "$BACKUP_DIR" -maxdepth 1 -name "*.tar.gz" | wc -l)
-    local total_backups=$((full_backups + custom_backups + tar_backups))
-    
-    # 计算总大小
-    local total_size=$(du -sh "$BACKUP_DIR" 2>/dev/null | cut -f1)
-    
-    # 最早和最晚备份
-    local oldest="N/A"
-    local newest="N/A"
-    
-    if [ "$total_backups" -gt 0 ]; then
-        oldest=$(find "$BACKUP_DIR" -maxdepth 1 -name "*backup_*" -o -name "*.tar.gz" -printf "%T+\n" 2>/dev/null | sort | head -1 | cut -d'+' -f1)
-        newest=$(find "$BACKUP_DIR" -maxdepth 1 -name "*backup_*" -o -name "*.tar.gz" -printf "%T+\n" 2>/dev/null | sort -r | head -1 | cut -d'+' -f1)
-    fi
-    
-    echo -e "${WHITE}备份统计:${RESET}"
-    echo -e "  完整备份: ${GREEN}${full_backups} 个${RESET}"
-    echo -e "  自定义备份: ${GREEN}${custom_backups} 个${RESET}"
-    echo -e "  压缩包备份: ${GREEN}${tar_backups} 个${RESET}"
-    echo -e "  总计: ${GREEN}${total_backups} 个${RESET}"
-    echo -e "  总大小: ${GREEN}${total_size}${RESET}"
-    echo -e "  最早备份: ${GRAY}${oldest}${RESET}"
-    echo -e "  最新备份: ${GRAY}${newest}${RESET}"
-    
-    # 显示目录使用情况
-    echo -e "\n${WHITE}目录使用情况:${RESET}"
-    df -h "$BACKUP_DIR" | awk 'NR==2 {printf("  可用空间: %s/%s (使用率: %s)\n", $4, $2, $5)}'
-    
-    # 检查备份历史日志
-    if [ -f "$BACKUP_DIR/backup_history.log" ]; then
-        echo -e "\n${WHITE}备份历史记录:${RESET}"
-        tail -5 "$BACKUP_DIR/backup_history.log" | while read line; do
-            echo "  $line"
-        done
-    fi
-    
-    read -p "按任意键继续..."
-}
-
-# 配置备份设置
-configure_backup_settings() {
-    echo -e "\n${CYAN}${ICON_INFO} 备份设置${RESET}"
-    echo -e "${CYAN}════════════════════════════════════════════${RESET}"
-    
-    echo -e "${WHITE}当前设置:${RESET}"
-    echo -e "  备份目录: ${GREEN}$BACKUP_DIR${RESET}"
-    echo -e "  最小磁盘空间: ${GREEN}${MIN_DISK_SPACE}GB${RESET}"
-    
-    echo -e "\n${CYAN}设置选项:${RESET}"
-    echo -e "  ${CYAN}[1] 修改备份目录${RESET}"
-    echo -e "  ${CYAN}[2] 修改最小磁盘空间${RESET}"
-    echo -e "  ${CYAN}[3] 查看自动备份配置${RESET}"
-    echo -e "  ${CYAN}[0] 返回${RESET}"
-    
-    echo -ne "\n${YELLOW}选择操作: ${RESET}"
-    read -r setting_choice
-    
-    case "$setting_choice" in
-        1)
-            echo -ne "\n${YELLOW}输入新的备份目录: ${RESET}"
-            read -r new_dir
-            if [ -n "$new_dir" ]; then
-                BACKUP_DIR="$new_dir"
-                echo -e "${GREEN}备份目录已更新为: $BACKUP_DIR${RESET}"
-                mkdir -p "$BACKUP_DIR"
-            fi
-            ;;
-        2)
-            echo -ne "\n${YELLOW}输入最小磁盘空间(GB): ${RESET}"
-            read -r new_space
-            if [[ "$new_space" =~ ^[0-9]+$ ]]; then
-                MIN_DISK_SPACE="$new_space"
-                echo -e "${GREEN}最小磁盘空间已更新为: ${MIN_DISK_SPACE}GB${RESET}"
-            fi
-            ;;
-        3)
-            echo -e "\n${YELLOW}自动备份功能开发中${RESET}"
-            echo -e "${GRAY}此功能将在后续版本中提供${RESET}"
-            ;;
-    esac
-    
-    read -p "按任意键继续..."
-}
-
-# 提取备份文件
-extract_backup_files() {
-    local backup_path="$1"
-    
-    echo -e "\n${CYAN}提取备份文件${RESET}"
-    echo -e "${CYAN}════════════════════════════════════════════${RESET}"
-    
-    if [[ "$backup_path" == *.tar.gz ]]; then
-        echo -ne "${YELLOW}输入提取目录 (默认: 当前目录): ${RESET}"
-        read -r extract_dir
-        extract_dir="${extract_dir:-.}"
-        
-        mkdir -p "$extract_dir"
-        
-        echo -n "正在解压... "
-        if tar -xzf "$backup_path" -C "$extract_dir" 2>/dev/null; then
-            echo -e "${GREEN}✓${RESET}"
-            echo -e "${GREEN}文件已提取到: $extract_dir${RESET}"
-        else
-            echo -e "${RED}✗ 解压失败${RESET}"
-        fi
-    else
-        echo -e "${YELLOW}只支持 .tar.gz 格式的压缩包提取${RESET}"
-    fi
-    
-    read -p "按任意键继续..."
-}
-
-# 删除备份
-delete_backup() {
-    local backup_path="$1"
-    
-    echo -e "\n${RED}删除备份${RESET}"
-    echo -e "${CYAN}════════════════════════════════════════════${RESET}"
-    
-    local backup_name=$(basename "$backup_path")
-    echo -e "${WHITE}要删除的备份: ${RED}$backup_name${RESET}"
-    
-    if confirm_action "确认删除此备份"; then
-        echo -n "正在删除... "
-        if rm -rf "$backup_path" 2>/dev/null; then
-            echo -e "${GREEN}✓${RESET}"
-            echo -e "${GREEN}备份已删除${RESET}"
-        else
-            echo -e "${RED}✗ 删除失败${RESET}"
-        fi
-    else
-        echo -e "${GRAY}取消删除${RESET}"
-    fi
-    
-    read -p "按任意键继续..."
-}
-
-# ===================== 在备份功能之后清理所有备份的函数 =====================
-cleanup_all_backups() {
-    echo -e "\n${RED}清理所有备份${RESET}"
-    echo -e "${CYAN}════════════════════════════════════════════${RESET}"
-    
-    local backup_count=$(find "$BACKUP_DIR" -maxdepth 1 -name "*.tar.gz" -o -name "*backup_*" -type d | wc -l)
-    
-    if [ "$backup_count" -eq 0 ]; then
-        echo -e "${YELLOW}没有备份文件可清理${RESET}"
-        return
-    fi
-    
-    echo -e "${RED}⚠️  警告：这将删除所有备份文件！${RESET}"
-    echo -e "${WHITE}将删除 ${backup_count} 个备份文件${RESET}"
-    
-    if confirm_action "确认删除所有备份（不可恢复）"; then
-        echo -e "\n${CYAN}正在删除备份文件...${RESET}"
-        
-        find "$BACKUP_DIR" -maxdepth 1 -name "*.tar.gz" -o -name "*backup_*" -type d | while read file; do
-            echo -n "删除 $(basename "$file") ... "
-            rm -rf "$file"
-            echo -e "${GREEN}✓${RESET}"
-        done
-        
-        echo -e "\n${GREEN}所有备份文件已删除${RESET}"
-    else
-        echo -e "${GRAY}取消清理${RESET}"
-    fi
-}
-
-# 清理手动选择
-cleanup_manual_selection() {
-    echo -e "\n${YELLOW}手动选择清理备份${RESET}"
-    echo -e "${CYAN}════════════════════════════════════════════${RESET}"
-    
-    local backup_files=($(find "$BACKUP_DIR" -maxdepth 1 -name "*.tar.gz" -o -name "*backup_*" -type d | sort -r))
-    
-    if [ ${#backup_files[@]} -eq 0 ]; then
-        echo -e "${YELLOW}没有备份文件可清理${RESET}"
-        return
-    fi
-    
-    selected_files=()
-    
-    while true; do
-        echo -e "\n${CYAN}选择要删除的备份:${RESET}"
-        
-        for i in "${!backup_files[@]}"; do
-            local idx=$((i+1))
-            local name=$(basename "${backup_files[$i]}")
-            local size=$(du -sh "${backup_files[$i]}" 2>/dev/null | cut -f1)
-            
-            if [[ " ${selected_files[@]} " =~ " $idx " ]]; then
-                echo -e "  ${GREEN}[${idx}] ✓ ${name} (${size})${RESET}"
-            else
-                echo -e "  ${CYAN}[${idx}]   ${name} (${size})${RESET}"
-            fi
-        done
-        
-        echo -e ""
-        echo -e "  ${GREEN}[D] 删除选中的备份${RESET}"
-        echo -e "  ${CYAN}[C] 清除所有选择${RESET}"
-        echo -e "  ${RED}[Q] 取消返回${RESET}"
-        
-        echo -ne "\n${YELLOW}选择 (编号/D/C/Q): ${RESET}"
-        read -r choice
-        
-        case "$choice" in
-            [1-9]*)
-                if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le ${#backup_files[@]} ]; then
-                    if [[ " ${selected_files[@]} " =~ " $choice " ]]; then
-                        selected_files=("${selected_files[@]/$choice/}")
-                        selected_files=(${selected_files[@]})
-                    else
-                        selected_files+=("$choice")
-                    fi
-                fi
+            2)
+                restore_backup
                 ;;
-            d|D)
-                if [ ${#selected_files[@]} -eq 0 ]; then
-                    echo -e "${RED}请至少选择一个备份！${RESET}"
-                    continue
-                fi
-                
-                echo -e "\n${RED}将删除以下备份:${RESET}"
-                for idx in "${selected_files[@]}"; do
-                    echo "  $(basename "${backup_files[$((idx-1))]}")"
-                done
-                
-                if confirm_action "确认删除以上备份"; then
-                    for idx in "${selected_files[@]}"; do
-                        local file="${backup_files[$((idx-1))]}"
-                        echo -n "删除 $(basename "$file") ... "
-                        rm -rf "$file"
-                        echo -e "${GREEN}✓${RESET}"
-                    done
-                    echo -e "\n${GREEN}删除完成${RESET}"
-                fi
-                return
+            3)
+                list_backups
                 ;;
-            c|C)
-                selected_files=()
-                echo -e "${GREEN}已清除所有选择${RESET}"
+            4)
+                backup_plugins
                 ;;
-            q|Q)
-                return
-                ;;
-        esac
-    done
-}
-# 创建完整备份
-create_full_backup() {
-    echo -e "\n${CYAN}${ICON_INFO} 创建完整备份${RESET}"
-    echo -e "${CYAN}════════════════════════════════════════════${RESET}"
-    
-    if ! confirm_action "创建完整系统备份（包含所有容器、数据和配置）"; then
-        return
-    fi
-    
-    # 生成备份ID和时间戳
-    local backup_id="full_backup_$(date +%Y%m%d_%H%M%S)"
-    local backup_dir="$BACKUP_DIR/$backup_id"
-    local temp_dir="/tmp/$backup_id"
-    local backup_archive="$BACKUP_DIR/${backup_id}.tar.gz"
-    
-    echo -e "\n${CYAN}[1/8] 准备备份环境...${RESET}"
-    mkdir -p "$backup_dir" "$temp_dir"
-    
-    # 显示系统状态
-    monitor_system_resources
-    
-    # 备份进度跟踪
-    local total_steps=8
-    local current_step=1
-    
-    # 步骤1：备份容器状态和配置
-    echo -e "\n${CYAN}[${current_step}/${total_steps}] 备份容器状态...${RESET}"
-    ((current_step++))
-    
-    local container_backup_log="$temp_dir/containers.log"
-    echo "=== 容器备份日志 $(date) ===" > "$container_backup_log"
-    
-    # 获取所有容器信息
-    docker ps -a --format "{{.Names}}" | while read container; do
-        echo -n "备份容器 $container ... "
-        
-        # 导出容器配置
-        docker inspect "$container" > "$backup_dir/${container}_config.json" 2>/dev/null
-        
-        # 导出容器元数据
-        docker inspect --format='{{json .Config}}' "$container" > "$backup_dir/${container}_metadata.json" 2>/dev/null
-        
-        # 获取容器状态
-        local state=$(docker inspect -f '{{.State.Status}}' "$container" 2>/dev/null || echo "unknown")
-        echo "状态: $state" >> "$container_backup_log"
-        
-        echo -e "${GREEN}✓${RESET}"
-    done
-    
-    # 步骤2：备份AstrBot数据
-    echo -e "\n${CYAN}[${current_step}/${total_steps}] 备份AstrBot数据...${RESET}"
-    ((current_step++))
-    
-    if [ -d "astrbot/data" ]; then
-        echo -n "备份AstrBot数据目录... "
-        cp -r astrbot/data "$backup_dir/astrbot_data" 2>/dev/null
-        echo -e "${GREEN}✓${RESET}"
-        
-        # 统计文件信息
-        local file_count=$(find "astrbot/data" -type f | wc -l 2>/dev/null || echo 0)
-        echo "AstrBot数据文件数: $file_count" >> "$container_backup_log"
-    else
-        echo -e "${YELLOW}⚠️ AstrBot数据目录不存在${RESET}"
-    fi
-    
-    # 步骤3：备份NapCat数据
-    echo -e "\n${CYAN}[${current_step}/${total_steps}] 备份NapCat数据...${RESET}"
-    ((current_step++))
-    
-    if [ -d "napcat/data" ]; then
-        echo -n "备份NapCat数据目录... "
-        cp -r napcat/data "$backup_dir/napcat_data" 2>/dev/null
-        echo -e "${GREEN}✓${RESET}"
-        
-        # 统计文件信息
-        local file_count=$(find "napcat/data" -type f | wc -l 2>/dev/null || echo 0)
-        echo "NapCat数据文件数: $file_count" >> "$container_backup_log"
-    else
-        echo -e "${YELLOW}⚠️ NapCat数据目录不存在${RESET}"
-    fi
-    
-    # 步骤4：备份共享目录
-    echo -e "\n${CYAN}[${current_step}/${total_steps}] 备份共享目录...${RESET}"
-    ((current_step++))
-    
-    if [ -d "$SHARED_DIR" ]; then
-        echo -n "备份共享目录... "
-        rsync -a "$SHARED_DIR/" "$backup_dir/shared_folder/" 2>/dev/null
-        echo -e "${GREEN}✓${RESET}"
-        
-        # 统计共享目录信息
-        local shared_size=$(du -sh "$SHARED_DIR" 2>/dev/null | cut -f1 || echo "0B")
-        local shared_files=$(find "$SHARED_DIR" -type f | wc -l 2>/dev/null || echo 0)
-        echo "共享目录大小: $shared_size, 文件数: $shared_files" >> "$container_backup_log"
-    else
-        echo -e "${YELLOW}⚠️ 共享目录不存在${RESET}"
-    fi
-    
-    # 步骤5：备份Docker配置
-    echo -e "\n${CYAN}[${current_step}/${total_steps}] 备份Docker配置...${RESET}"
-    ((current_step++))
-    
-    echo -n "备份Docker配置... "
-    if [ -f "/etc/docker/daemon.json" ]; then
-        cp /etc/docker/daemon.json "$backup_dir/docker_daemon.json"
-    fi
-    
-    # 备份Docker网络配置
-    docker network ls --format "{{.Name}}" | while read network; do
-        docker network inspect "$network" > "$backup_dir/docker_network_${network}.json" 2>/dev/null
-    done
-    echo -e "${GREEN}✓${RESET}"
-    
-    # 步骤6：备份系统配置
-    echo -e "\n${CYAN}[${current_step}/${total_steps}] 备份系统配置...${RESET}"
-    ((current_step++))
-    
-    echo -n "备份DNS配置... "
-    if [ -f "/etc/systemd/resolved.conf" ]; then
-        cp /etc/systemd/resolved.conf "$backup_dir/system_resolved.conf"
-    fi
-    
-    if [ -f "/etc/resolv.conf" ]; then
-        cp /etc/resolv.conf "$backup_dir/resolv.conf"
-    fi
-    echo -e "${GREEN}✓${RESET}"
-    
-    # 步骤7：创建备份信息文件
-    echo -e "\n${CYAN}[${current_step}/${total_steps}] 创建备份信息...${RESET}"
-    ((current_step++))
-    
-    
-    if docker inspect astrbot &>/dev/null; then
-    echo -n "备份AstrBot插件和配置... "
-    docker cp astrbot:/app/plugins "$backup_dir/astrbot_plugins" 2>/dev/null
-    docker cp astrbot:/app/config "$backup_dir/astrbot_config" 2>/dev/null
-    echo -e "${GREEN}✓${RESET}"
-    else
-    echo -e "${YELLOW}⚠️ AstrBot容器未运行，跳过插件备份${RESET}"
-    fi
-
-
-    if docker inspect napcat &>/dev/null; then
-    echo -n "备份NapCat插件和配置... "
-    docker cp napcat:/app/plugins "$backup_dir/napcat_plugins" 2>/dev/null
-    docker cp napcat:/app/config "$backup_dir/napcat_config" 2>/dev/null
-    echo -e "${GREEN}✓${RESET}"
-    else
-    echo -e "${YELLOW}⚠️ NapCat容器未运行，跳过插件备份${RESET}"
-    fi
-    
-
-    cat > "$backup_dir/backup_info.md" << EOF
-# 系统备份信息
-
-## 基本信息
-- 备份ID: $backup_id
-- 备份时间: $(date)
-- 备份类型: 完整备份
-- 脚本版本: $CURRENT_VERSION
-- 系统时间: $(date '+%Y-%m-%d %H:%M:%S %Z')
-
-## 系统信息
-- 主机名: $(hostname)
-- 系统: $(cat /etc/os-release | grep PRETTY_NAME | cut -d= -f2 | tr -d '"')
-- 内核版本: $(uname -r)
-- 架构: $(uname -m)
-
-## Docker信息
-$(docker --version 2>/dev/null || echo "Docker未安装")
-
-## 容器状态
-$(docker ps -a --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || echo "无容器信息")
-
-## 备份内容
-1. 容器配置和状态
-2. AstrBot数据目录
-3. NapCat数据目录
-4. 共享文件夹 ($SHARED_DIR)
-5. Docker配置
-6. 系统DNS配置
-
-## 文件统计
-$(find "$backup_dir" -type f | wc -l) 个文件
-$(du -sh "$backup_dir" | cut -f1) 总大小
-
-## 重要提示
-- 恢复前请确保Docker已安装并运行
-- 恢复容器数据时需要停止相关容器
-- 共享目录权限为 777
-- 备份不包含Docker镜像，恢复时需重新拉取
-
-## 恢复命令
-\`\`\`bash
-# 恢复此备份
-bash $(basename "$0") --restore $backup_id
-\`\`\`
-EOF
-    
-    # 创建恢复脚本
-    cat > "$backup_dir/restore.sh" << 'EOF'
-#!/bin/bash
-# 备份恢复脚本
-# 使用: bash restore.sh [备份目录]
-
-set -euo pipefail
-
-BACKUP_DIR="$1"
-RESTORE_DIR="$(pwd)"
-
-echo "=== 开始恢复备份 ==="
-echo "备份目录: $BACKUP_DIR"
-echo "恢复目录: $RESTORE_DIR"
-
-# 检查必要文件
-if [ ! -f "$BACKUP_DIR/backup_info.md" ]; then
-    echo "错误: 备份信息文件不存在"
-    exit 1
-fi
-
-# 停止容器
-echo "停止容器..."
-docker stop astrbot napcat 2>/dev/null || true
-
-# 恢复AstrBot数据
-if [ -d "$BACKUP_DIR/astrbot_data" ]; then
-    echo "恢复AstrBot数据..."
-    rm -rf "$RESTORE_DIR/astrbot/data" 2>/dev/null
-    cp -r "$BACKUP_DIR/astrbot_data" "$RESTORE_DIR/astrbot/data"
-fi
-
-# 恢复NapCat数据
-if [ -d "$BACKUP_DIR/napcat_data" ]; then
-    echo "恢复NapCat数据..."
-    rm -rf "$RESTORE_DIR/napcat/data" 2>/dev/null
-    cp -r "$BACKUP_DIR/napcat_data" "$RESTORE_DIR/napcat/data"
-fi
-
-# 恢复共享目录
-if [ -d "$BACKUP_DIR/shared_folder" ]; then
-    echo "恢复共享目录..."
-    SHARED_DIR="/vol3/1000/dockerSharedFolder"
-    rm -rf "$SHARED_DIR" 2>/dev/null
-    cp -r "$BACKUP_DIR/shared_folder" "$SHARED_DIR"
-    chmod -R 777 "$SHARED_DIR"
-fi
-
-# 恢复Docker配置
-if [ -f "$BACKUP_DIR/docker_daemon.json" ]; then
-    echo "恢复Docker配置..."
-    cp "$BACKUP_DIR/docker_daemon.json" /etc/docker/daemon.json
-fi
-
-# 恢复系统配置
-if [ -f "$BACKUP_DIR/system_resolved.conf" ]; then
-    echo "恢复DNS配置..."
-    cp "$BACKUP_DIR/system_resolved.conf" /etc/systemd/resolved.conf
-    systemctl restart systemd-resolved 2>/dev/null || true
-fi
-
-# 重启容器
-echo "重启容器..."
-docker start astrbot napcat 2>/dev/null || true
-
-echo "=== 恢复完成 ==="
-echo "请检查容器状态: docker ps -a"
-EOF
-    
-    chmod +x "$backup_dir/restore.sh"
-    
-    # 步骤8：压缩备份并清理
-    echo -e "\n${CYAN}[${current_step}/${total_steps}] 压缩备份文件...${RESET}"
-    
-    echo -n "创建压缩包... "
-    cd "$BACKUP_DIR" 2>/dev/null
-    tar -czf "${backup_id}.tar.gz" "$backup_id" 2>/dev/null
-    cd - >/dev/null
-    
-    # 计算压缩率
-    local original_size=$(du -sb "$backup_dir" | cut -f1 2>/dev/null || echo 0)
-    local compressed_size=$(du -sb "$backup_archive" | cut -f1 2>/dev/null || echo 0)
-    local compression_rate=0
-    
-    if [ "$original_size" -gt 0 ] && [ "$compressed_size" -gt 0 ]; then
-        compression_rate=$(( (original_size - compressed_size) * 100 / original_size ))
-    fi
-    
-    echo -e "${GREEN}✓${RESET} (压缩率: ${compression_rate}%)"
-    
-    # 验证压缩包
-    echo -n "验证压缩包... "
-    if tar -tzf "$backup_archive" >/dev/null 2>&1; then
-        echo -e "${GREEN}✓${RESET}"
-    else
-        echo -e "${RED}✗${RESET}"
-    fi
-    
-    # 清理临时文件
-    echo -n "清理临时文件... "
-    rm -rf "$backup_dir" "$temp_dir"
-    echo -e "${GREEN}✓${RESET}"
-    
-    # 显示备份结果
-    local final_size=$(du -h "$backup_archive" | cut -f1)
-    local backup_time=$(date '+%Y-%m-%d %H:%M:%S')
-    
-    echo -e "\n${GREEN}════════════════════════════════════════════${RESET}"
-    echo -e "${WHITE}          备份创建完成！${RESET}"
-    echo -e "${GREEN}════════════════════════════════════════════${RESET}"
-    echo -e "${WHITE}备份ID: ${GREEN}$backup_id${RESET}"
-    echo -e "${WHITE}文件: ${GREEN}$backup_archive${RESET}"
-    echo -e "${WHITE}大小: ${GREEN}$final_size${RESET}"
-    echo -e "${WHITE}时间: ${GREEN}$backup_time${RESET}"
-    echo -e "${WHITE}压缩率: ${GREEN}${compression_rate}%${RESET}"
-    echo -e "${WHITE}MD5校验: ${GREEN}$(md5sum "$backup_archive" | cut -d' ' -f1)${RESET}"
-    
-    # 记录备份日志
-    echo "$backup_time | $backup_id | $final_size | 完整备份" >> "$BACKUP_DIR/backup_history.log"
-    
-    echo -e "\n${GREEN}${ICON_CHECK} 备份完成！按任意键继续...${RESET}"
-    read -p ""
-}
-
-# 创建自定义备份
-create_custom_backup() {
-    echo -e "\n${CYAN}${ICON_INFO} 创建自定义备份${RESET}"
-    echo -e "${CYAN}════════════════════════════════════════════${RESET}"
-    
-    local selected_items=()
-    
-    while true; do
-        print_header
-        echo -e "${CYAN}选择要备份的内容:${RESET}"
-        echo -e ""
-        
-        # 显示选项状态
-        local options=(
-            "AstrBot容器配置和数据"
-            "NapCat容器配置和数据"
-            "共享文件夹内容"
-            "Docker配置和网络"
-            "系统DNS配置"
-            "容器日志文件"
-            "脚本配置文件"
-        )
-        
-        for i in "${!options[@]}"; do
-            local idx=$((i+1))
-            if [[ " ${selected_items[@]} " =~ " $idx " ]]; then
-                echo -e "  ${GREEN}[${idx}] ✓ ${options[$i]}${RESET}"
-            else
-                echo -e "  ${CYAN}[${idx}]   ${options[$i]}${RESET}"
-            fi
-        done
-        
-        echo -e ""
-        echo -e "  ${GREEN}[S] 开始备份选中的内容${RESET}"
-        echo -e "  ${CYAN}[C] 清除所有选择${RESET}"
-        echo -e "  ${RED}[Q] 取消返回${RESET}"
-        
-        echo -ne "\n${YELLOW}选择 (编号/S/C/Q): ${RESET}"
-        read -r choice
-        
-        case "$choice" in
-            [1-7])
-                if [[ " ${selected_items[@]} " =~ " $choice " ]]; then
-                    # 取消选择
-                    selected_items=("${selected_items[@]/$choice/}")
-                    selected_items=(${selected_items[@]})  # 重新索引
-                else
-                    # 添加选择
-                    selected_items+=("$choice")
-                fi
-                ;;
-            s|S)
-                if [ ${#selected_items[@]} -eq 0 ]; then
-                    echo -e "${RED}请至少选择一项内容！${RESET}"
-                    sleep 1
-                    continue
-                fi
-                break
-                ;;
-            c|C)
-                selected_items=()
-                echo -e "${GREEN}已清除所有选择${RESET}"
-                sleep 1
-                ;;
-            q|Q)
+            0)
                 return
                 ;;
             *)
-                echo -e "${RED}无效选择！${RESET}"
-                sleep 1
+                echo -e "${RED}无效选择${RESET}"
                 ;;
         esac
+        
+        echo -e "\n${GREEN}按任意键继续...${RESET}"
+        read -p ""
     done
-    
-    # 开始备份选中的内容
-    echo -e "\n${CYAN}开始备份选中的内容...${RESET}"
-    
-    local backup_id="custom_backup_$(date +%Y%m%d_%H%M%S)"
-    local backup_dir="$BACKUP_DIR/$backup_id"
-    
+}
+
+create_backup() {
+    local backup_dir="$BACKUP_DIR/backup_$(date +%Y%m%d_%H%M%S)"
     mkdir -p "$backup_dir"
     
-    # 根据选择备份内容
-    for item in "${selected_items[@]}"; do
-        case "$item" in
-            1) # AstrBot
-                echo -n "备份AstrBot... "
-                docker inspect astrbot > "$backup_dir/astrbot.json" 2>/dev/null
-                [ -d "astrbot/data" ] && cp -r astrbot/data "$backup_dir/astrbot_data"
-                echo -e "${GREEN}✓${RESET}"
-                ;;
-            2) # NapCat
-                echo -n "备份NapCat... "
-                docker inspect napcat > "$backup_dir/napcat.json" 2>/dev/null
-                [ -d "napcat/data" ] && cp -r napcat/data "$backup_dir/napcat_data"
-                echo -e "${GREEN}✓${RESET}"
-                ;;
-            3) # 共享文件夹
-                echo -n "备份共享文件夹... "
-                [ -d "$SHARED_DIR" ] && rsync -a "$SHARED_DIR/" "$backup_dir/shared_folder/"
-                echo -e "${GREEN}✓${RESET}"
-                ;;
-            4) # Docker配置
-                echo -n "备份Docker配置... "
-                [ -f "/etc/docker/daemon.json" ] && cp /etc/docker/daemon.json "$backup_dir/"
-                docker network ls --format "{{.Name}}" | while read network; do
-                    docker network inspect "$network" > "$backup_dir/network_${network}.json" 2>/dev/null
-                done
-                echo -e "${GREEN}✓${RESET}"
-                ;;
-            5) # DNS配置
-                echo -n "备份DNS配置... "
-                [ -f "/etc/systemd/resolved.conf" ] && cp /etc/systemd/resolved.conf "$backup_dir/"
-                [ -f "/etc/resolv.conf" ] && cp /etc/resolv.conf "$backup_dir/"
-                echo -e "${GREEN}✓${RESET}"
-                ;;
-            6) # 容器日志
-                echo -n "备份容器日志... "
-                docker logs --tail=1000 astrbot > "$backup_dir/astrbot.log" 2>/dev/null
-                docker logs --tail=1000 napcat > "$backup_dir/napcat.log" 2>/dev/null
-                echo -e "${GREEN}✓${RESET}"
-                ;;
-            7) # 脚本配置
-                echo -n "备份脚本配置... "
-                cp "$0" "$backup_dir/deploy_script_backup.sh" 2>/dev/null
-                [ -f "$LOG_FILE" ] && tail -100 "$LOG_FILE" > "$backup_dir/script_log.txt" 2>/dev/null
-                echo -e "${GREEN}✓${RESET}"
-                ;;
-        esac
-    done
+    echo -e "\n${CYAN}正在创建完整备份...${RESET}"
     
-    # 创建备份信息
+    # 备份容器配置
+    docker inspect astrbot > "$backup_dir/astrbot.json" 2>/dev/null
+    docker inspect napcat > "$backup_dir/napcat.json" 2>/dev/null
+    
+    # 备份数据目录
+    if [ -d "astrbot/data" ]; then
+        cp -r astrbot/data "$backup_dir/astrbot_data"
+    fi
+    
+    if [ -d "napcat/data" ]; then
+        cp -r napcat/data "$backup_dir/napcat_data"
+    fi
+    
+    # 备份插件和配置文件
+    echo -e "${CYAN}备份插件配置...${RESET}"
+    
+    # AstrBot插件备份
+    if docker ps --filter "name=astrbot" --format "{{.Names}}" | grep -q "astrbot"; then
+        echo -e "${CYAN}备份AstrBot插件...${RESET}"
+        docker exec astrbot bash -c "cp -r /AstrBot/plugins $backup_dir/astrbot_plugins" 2>/dev/null || true
+        docker exec astrbot bash -c "cp -r /AstrBot/config $backup_dir/astrbot_config" 2>/dev/null || true
+    fi
+    
+    # NapCat插件备份
+    if docker ps --filter "name=napcat" --format "{{.Names}}" | grep -q "napcat"; then
+        echo -e "${CYAN}备份NapCat插件...${RESET}"
+        docker exec napcat bash -c "cp -r /app/plugins $backup_dir/napcat_plugins" 2>/dev/null || true
+        docker exec napcat bash -c "cp -r /app/config $backup_dir/napcat_config" 2>/dev/null || true
+    fi
+    
+    # 备份共享目录中的关键文件
+    if [ -d "$SHARED_DIR" ]; then
+        find "$SHARED_DIR" -type f \( -name "*.json" -o -name "*.yml" -o -name "*.yaml" -o -name "*.txt" -o -name "*.conf" \) | \
+            head -50 | xargs -I {} cp --parents {} "$backup_dir/" 2>/dev/null || true
+    fi
+    
+    # 创建备份信息文件
     cat > "$backup_dir/backup_info.txt" << EOF
-自定义备份信息
-时间: $(date)
-备份ID: $backup_id
-选中的内容: ${selected_items[*]}
+备份时间: $(date)
 脚本版本: $CURRENT_VERSION
+系统信息: $(uname -a)
+包含内容:
+  - AstrBot容器配置
+  - NapCat容器配置
+  - AstrBot数据目录
+  - NapCat数据目录
+  - AstrBot插件目录
+  - NapCat插件目录
+  - 共享目录配置文件
+备份命令: $(basename "$0") --restore $backup_dir
 EOF
     
-    echo -e "\n${GREEN}✅ 自定义备份完成: $backup_dir${RESET}"
-    echo -e "${GRAY}大小: $(du -sh "$backup_dir" | cut -f1)${RESET}"
-    echo -e "\n${GREEN}按任意键继续...${RESET}"
-    read -p ""
+    echo -e "${GREEN}✅ 备份创建完成: $backup_dir${RESET}"
+    local size=$(du -sh "$backup_dir" 2>/dev/null | cut -f1 || echo "未知")
+    echo -e "${GRAY}备份大小: ${size}${RESET}"
+    
+    # 显示备份内容
+    echo -e "\n${CYAN}备份内容:${RESET}"
+    find "$backup_dir" -type f | sed "s|$backup_dir/|  📄 |" | head -20
+    local file_count=$(find "$backup_dir" -type f | wc -l)
+    echo -e "${GRAY}总文件数: ${file_count}个${RESET}"
 }
 
-# 详细备份列表
-list_backups_detailed() {
-    echo -e "\n${CYAN}${ICON_INFO} 备份文件列表${RESET}"
-    echo -e "${CYAN}════════════════════════════════════════════${RESET}"
-    
-    if [ ! -d "$BACKUP_DIR" ] || [ -z "$(ls -A "$BACKUP_DIR" 2>/dev/null)" ]; then
-        echo -e "${YELLOW}暂无备份文件${RESET}"
-        return
-    fi
-    
-    echo -e "${WHITE}备份目录: $BACKUP_DIR${RESET}"
-    echo -e ""
-    
-    # 显示备份文件表格
-    echo -e "${CYAN}┌─────────────────────────────────────────────────────────────────────┐${RESET}"
-    echo -e "${CYAN}│ ${WHITE}序号  │ 备份名称                           │ 大小     │ 修改时间        ${CYAN}│${RESET}"
-    echo -e "${CYAN}├─────────────────────────────────────────────────────────────────────┤${RESET}"
-    
-    local backup_files=($(find "$BACKUP_DIR" -maxdepth 1 -name "*.tar.gz" -o -name "*backup_*" -type d | sort -r))
-    local count=0
-    
-    for backup in "${backup_files[@]}"; do
-        ((count++))
-        
-        local name=$(basename "$backup")
-        local size=$(du -sh "$backup" 2>/dev/null | cut -f1)
-        local mtime=$(stat -c "%y" "$backup" 2>/dev/null | cut -d'.' -f1)
-        local type="目录"
-        
-        if [[ "$name" == *.tar.gz ]]; then
-            type="压缩包"
-            name="${name%.tar.gz}"
-        fi
-        
-        # 截断过长的名称
-        if [ ${#name} -gt 30 ]; then
-            name="${name:0:27}..."
-        fi
-        
-        printf "${CYAN}│ ${WHITE}%3d  │ %-30s %-5s │ %-8s │ %-14s ${CYAN}│\n" \
-               "$count" "$name" "($type)" "$size" "${mtime:5:11}"
-    done
-    
-    echo -e "${CYAN}└─────────────────────────────────────────────────────────────────────┘${RESET}"
-    
-    if [ "$count" -eq 0 ]; then
-        echo -e "${YELLOW}未找到备份文件${RESET}"
-    else
-        echo -e "\n${WHITE}总计: ${GREEN}$count 个备份${RESET}"
-        
-        # 显示统计信息
-        local total_size=$(du -sh "$BACKUP_DIR" 2>/dev/null | cut -f1)
-        local oldest=$(find "$BACKUP_DIR" -maxdepth 1 -type f -name "*.tar.gz" -o -type d -name "*backup_*" -printf "%T+\n" 2>/dev/null | sort | head -1 | cut -d'+' -f1)
-        local newest=$(find "$BACKUP_DIR" -maxdepth 1 -type f -name "*.tar.gz" -o -type d -name "*backup_*" -printf "%T+\n" 2>/dev/null | sort -r | head -1 | cut -d'+' -f1)
-        
-        echo -e "${WHITE}备份总量: ${GREEN}$total_size${RESET}"
-        echo -e "${WHITE}时间范围: ${GREEN}$oldest 至 $newest${RESET}"
-        
-        # 询问是否查看更多信息
-        echo -ne "\n${YELLOW}输入备份序号查看详情 (0返回): ${RESET}"
-        read -r select_num
-        
-        if [[ "$select_num" =~ ^[0-9]+$ ]] && [ "$select_num" -gt 0 ] && [ "$select_num" -le "$count" ]; then
-            show_backup_details "${backup_files[$((select_num-1))]}"
-        fi
-    fi
-    
-    echo -e "\n${GREEN}按任意键继续...${RESET}"
-    read -p ""
-}
-
-# 显示备份详情
-show_backup_details() {
-    local backup_path="$1"
-    
-    echo -e "\n${CYAN}${ICON_INFO} 备份详情${RESET}"
-    echo -e "${CYAN}════════════════════════════════════════════${RESET}"
-    
-    echo -e "${WHITE}路径: ${GREEN}$backup_path${RESET}"
-    
-    if [[ "$backup_path" == *.tar.gz ]]; then
-        # 压缩包备份
-        echo -e "${WHITE}类型: ${GREEN}压缩包 (.tar.gz)${RESET}"
-        echo -e "${WHITE}大小: ${GREEN}$(du -h "$backup_path" | cut -f1)${RESET}"
-        echo -e "${WHITE}修改时间: ${GREEN}$(stat -c "%y" "$backup_path" 2>/dev/null | cut -d'.' -f1)${RESET}"
-        echo -e "${WHITE}MD5: ${GREEN}$(md5sum "$backup_path" | cut -d' ' -f1)${RESET}"
-        
-        # 列出压缩包内容
-        echo -e "\n${CYAN}包含内容:${RESET}"
-        tar -tzf "$backup_path" 2>/dev/null | head -20 | while read line; do
-            echo "  $line"
-        done
-        
-        local total_files=$(tar -tzf "$backup_path" 2>/dev/null | wc -l)
-        if [ "$total_files" -gt 20 ]; then
-            echo -e "  ... 还有 $((total_files - 20)) 个文件"
-        fi
-        
-    elif [ -d "$backup_path" ]; then
-        # 目录备份
-        echo -e "${WHITE}类型: ${GREEN}目录备份${RESET}"
-        echo -e "${WHITE}大小: ${GREEN}$(du -sh "$backup_path" | cut -f1)${RESET}"
-        echo -e "${WHITE}文件数: ${GREEN}$(find "$backup_path" -type f | wc -l)${RESET}"
-        echo -e "${WHITE}目录数: ${GREEN}$(find "$backup_path" -type d | wc -l)${RESET}"
-        echo -e "${WHITE}修改时间: ${GREEN}$(stat -c "%y" "$backup_path" 2>/dev/null | cut -d'.' -f1)${RESET}"
-        
-        # 显示备份信息文件
-        if [ -f "$backup_path/backup_info.md" ]; then
-            echo -e "\n${CYAN}备份信息:${RESET}"
-            head -20 "$backup_path/backup_info.md" | while read line; do
-                echo "  $line"
-            done
-        elif [ -f "$backup_path/backup_info.txt" ]; then
-            echo -e "\n${CYAN}备份信息:${RESET}"
-            cat "$backup_path/backup_info.txt"
-        fi
-        
-        # 显示目录结构
-        echo -e "\n${CYAN}目录结构:${RESET}"
-        find "$backup_path" -maxdepth 2 -type f -name "*.json" -o -name "*.log" -o -name "*.sh" | head -10 | while read file; do
-            local rel_path="${file#$backup_path/}"
-            local file_size=$(du -h "$file" | cut -f1)
-            echo "  $rel_path ($file_size)"
-        done
-    fi
-    
-    echo -e "\n${CYAN}操作选项:${RESET}"
-    echo -e "  ${GREEN}[1] 验证完整性${RESET}"
-    echo -e "  ${GREEN}[2] 提取文件${RESET}"
-    echo -e "  ${YELLOW}[3] 删除备份${RESET}"
-    echo -e "  ${CYAN}[0] 返回${RESET}"
-    
-    echo -ne "\n${YELLOW}选择操作: ${RESET}"
-    read -r action
-    
-    case "$action" in
-        1) verify_single_backup "$backup_path" ;;
-        2) extract_backup_files "$backup_path" ;;
-        3) delete_backup "$backup_path" ;;
-    esac
-}
-
-# 验证单个备份完整性
-verify_single_backup() {
-    local backup_path="$1"
-    
-    echo -e "\n${CYAN}验证备份完整性...${RESET}"
-    
-    if [[ "$backup_path" == *.tar.gz ]]; then
-        echo -n "检查压缩包... "
-        if tar -tzf "$backup_path" >/dev/null 2>&1; then
-            echo -e "${GREEN}✓ 压缩包完整${RESET}"
-            
-            # 检查关键文件
-            echo -n "检查关键文件... "
-            local required_files=("backup_info.md" "backup_info.txt")
-            local missing_files=()
-            
-            for file in "${required_files[@]}"; do
-                if ! tar -tzf "$backup_path" | grep -q "$file"; then
-                    missing_files+=("$file")
-                fi
-            done
-            
-            if [ ${#missing_files[@]} -eq 0 ]; then
-                echo -e "${GREEN}✓ 关键文件完整${RESET}"
-            else
-                echo -e "${YELLOW}⚠ 缺少文件: ${missing_files[*]}${RESET}"
-            fi
-            
-        else
-            echo -e "${RED}✗ 压缩包损坏${RESET}"
-        fi
-        
-    elif [ -d "$backup_path" ]; then
-        echo -n "检查目录结构... "
-        
-        local checks_passed=0
-        local total_checks=3
-        
-        # 检查1: 备份信息文件
-        if [ -f "$backup_path/backup_info.md" ] || [ -f "$backup_path/backup_info.txt" ]; then
-            ((checks_passed++))
-        fi
-        
-        # 检查2: 至少有一个数据目录
-        if [ -d "$backup_path/astrbot_data" ] || [ -d "$backup_path/napcat_data" ] || [ -d "$backup_path/shared_folder" ]; then
-            ((checks_passed++))
-        fi
-        
-        # 检查3: 配置文件存在
-        if [ -f "$backup_path/astrbot.json" ] || [ -f "$backup_path/napcat.json" ] || [ -f "$backup_path/docker_daemon.json" ]; then
-            ((checks_passed++))
-        fi
-        
-        if [ "$checks_passed" -eq "$total_checks" ]; then
-            echo -e "${GREEN}✓ 目录结构完整 ($checks_passed/$total_checks)${RESET}"
-        elif [ "$checks_passed" -ge 1 ]; then
-            echo -e "${YELLOW}⚠ 部分完整 ($checks_passed/$total_checks)${RESET}"
-        else
-            echo -e "${RED}✗ 目录结构不完整${RESET}"
-        fi
-    fi
-    
-    # 计算完整性百分比
-    local integrity=0
-    if [[ "$backup_path" == *.tar.gz ]]; then
-        integrity=95  # 假设压缩包验证通过
-    elif [ -d "$backup_path" ]; then
-        integrity=$((checks_passed * 100 / total_checks))
-    fi
-    
-    echo -e "\n${WHITE}完整性评估: ${RESET}"
-    if [ "$integrity" -ge 90 ]; then
-        echo -e "${GREEN}  ██████████ 100% - 优秀${RESET}"
-    elif [ "$integrity" -ge 70 ]; then
-        echo -e "${YELLOW}  ████████░░ 80% - 良好${RESET}"
-    elif [ "$integrity" -ge 50 ]; then
-        echo -e "${ORANGE}  ██████░░░░ 60% - 一般${RESET}"
-    else
-        echo -e "${RED}  ████░░░░░░ 40% - 较差${RESET}"
-    fi
-    
-    echo -e "\n${GREEN}验证完成${RESET}"
-    read -p "按任意键继续..."
-}
-
-# 恢复完整备份
-restore_full_backup() {
-    echo -e "\n${RED}${ICON_WARN} 恢复完整备份${RESET}"
-    echo -e "${CYAN}════════════════════════════════════════════${RESET}"
-    
-    # 警告信息
-    echo -e "${RED}⚠️  ⚠️  ⚠️  重要警告 ⚠️  ⚠️  ⚠️${RESET}"
-    echo -e "${RED}此操作将覆盖现有数据，可能导致数据丢失！${RESET}"
-    echo -e "${RED}请在继续前确认已备份重要数据！${RESET}"
-    
-    if ! confirm_action "恢复备份将停止容器并覆盖数据"; then
-        return
-    fi
-    
-    # 选择备份文件
+restore_backup() {
     echo -e "\n${CYAN}选择要恢复的备份:${RESET}"
     
-    local backup_files=($(find "$BACKUP_DIR" -maxdepth 1 -name "*.tar.gz" -o -name "*backup_*" -type d | sort -r))
+    # 获取备份列表
+    local backups=()
+    local i=1
     
-    if [ ${#backup_files[@]} -eq 0 ]; then
-        echo -e "${YELLOW}未找到备份文件${RESET}"
+    if [ -d "$BACKUP_DIR" ]; then
+        for dir in "$BACKUP_DIR"/backup_*; do
+            if [ -d "$dir" ]; then
+                backups[$i]="$dir"
+                local date_str=$(basename "$dir" | sed 's/backup_//')
+                local size=$(du -sh "$dir" 2>/dev/null | cut -f1 || echo "未知")
+                echo -e "  ${CYAN}[$i] ${dir}${RESET} (${size})"
+                ((i++))
+            fi
+        done
+    fi
+    
+    if [ ${#backups[@]} -eq 0 ]; then
+        echo -e "${YELLOW}暂无备份${RESET}"
         return
     fi
     
-    for i in "${!backup_files[@]}"; do
-        local idx=$((i+1))
-        local name=$(basename "${backup_files[$i]}")
-        local size=$(du -sh "${backup_files[$i]}" 2>/dev/null | cut -f1)
-        echo -e "  ${CYAN}[$idx] ${name} (${size})${RESET}"
-    done
+    echo -e "  ${CYAN}[0] 取消${RESET}"
     
-    echo -ne "\n${YELLOW}选择备份序号 (0取消): ${RESET}"
-    read -r backup_choice
+    echo -ne "\n${YELLOW}请选择备份编号: ${RESET}"
+    read -r backup_num
     
-    if ! [[ "$backup_choice" =~ ^[0-9]+$ ]] || [ "$backup_choice" -eq 0 ] || [ "$backup_choice" -gt ${#backup_files[@]} ]; then
-        echo -e "${RED}取消恢复${RESET}"
+    if [ "$backup_num" = "0" ] || [ -z "${backups[$backup_num]}" ]; then
+        echo -e "${GRAY}已取消${RESET}"
         return
     fi
     
-    local selected_backup="${backup_files[$((backup_choice-1))]}"
-    local backup_name=$(basename "$selected_backup")
+    local backup_path="${backups[$backup_num]}"
     
-    echo -e "\n${CYAN}准备恢复备份: ${WHITE}$backup_name${RESET}"
-    
-    # 验证备份
-    echo -n "验证备份... "
-    if ! verify_single_backup_silent "$selected_backup"; then
-        echo -e "${RED}✗ 备份验证失败${RESET}"
-        return
-    fi
-    echo -e "${GREEN}✓${RESET}"
-    
-    # 创建恢复目录
-    local restore_dir="/tmp/restore_$(date +%s)"
-    mkdir -p "$restore_dir"
-    
-    # 提取备份
-    echo -n "提取备份文件... "
-    if [[ "$selected_backup" == *.tar.gz ]]; then
-        tar -xzf "$selected_backup" -C "$restore_dir" 2>/dev/null
-    else
-        cp -r "$selected_backup"/* "$restore_dir/" 2>/dev/null
-    fi
-    
-    if [ $? -eq 0 ]; then
-        echo -e "${GREEN}✓${RESET}"
-    else
-        echo -e "${RED}✗ 提取失败${RESET}"
-        rm -rf "$restore_dir"
+    if ! confirm_action "恢复备份 $(basename "$backup_path")"; then
         return
     fi
     
-    # 检查恢复目录
-    if [ ! -f "$restore_dir/backup_info.md" ] && [ ! -f "$restore_dir/backup_info.txt" ]; then
-        echo -e "${RED}✗ 备份信息文件缺失${RESET}"
-        rm -rf "$restore_dir"
-        return
-    fi
-    
-    # 显示恢复计划
-    echo -e "\n${CYAN}恢复计划:${RESET}"
-    
-    local restore_items=()
-    [ -d "$restore_dir/astrbot_data" ] && restore_items+=("AstrBot数据")
-    [ -d "$restore_dir/napcat_data" ] && restore_items+=("NapCat数据")
-    [ -d "$restore_dir/shared_folder" ] && restore_items+=("共享文件夹")
-    [ -f "$restore_dir/docker_daemon.json" ] && restore_items+=("Docker配置")
-    [ -f "$restore_dir/system_resolved.conf" ] && restore_items+=("DNS配置")
-    
-    for item in "${restore_items[@]}"; do
-        echo -e "  ${GREEN}✓${RESET} $item"
-    done
-    
-    # 确认恢复
-    echo -e "\n${RED}即将执行以下操作:${RESET}"
-    echo -e "  1. 停止AstrBot和NapCat容器"
-    echo -e "  2. 备份当前数据到临时位置"
-    echo -e "  3. 恢复备份数据"
-    echo -e "  4. 重启容器"
-    
-    if ! confirm_action "确认执行恢复操作"; then
-        rm -rf "$restore_dir"
-        return
-    fi
-    
-    # 开始恢复
-    echo -e "\n${CYAN}开始恢复...${RESET}"
-    
-    # 步骤1: 停止容器
-    echo -n "停止容器... "
-    docker stop astrbot napcat 2>/dev/null
-    echo -e "${GREEN}✓${RESET}"
-    
-    # 步骤2: 备份当前数据
-    echo -n "备份当前数据... "
-    local current_backup="/tmp/current_backup_$(date +%s)"
-    mkdir -p "$current_backup"
-    
-    [ -d "astrbot/data" ] && cp -r astrbot/data "$current_backup/astrbot_data" 2>/dev/null
-    [ -d "napcat/data" ] && cp -r napcat/data "$current_backup/napcat_data" 2>/dev/null
-    [ -d "$SHARED_DIR" ] && cp -r "$SHARED_DIR" "$current_backup/shared_folder" 2>/dev/null
-    
-    echo -e "${GREEN}✓${RESET} (备份到: $current_backup)"
-    
-    # 步骤3: 恢复数据
-    echo -e "\n${CYAN}恢复数据...${RESET}"
+    echo -e "\n${CYAN}正在恢复备份...${RESET}"
     
     # 恢复AstrBot数据
-    if [ -d "$restore_dir/astrbot_data" ]; then
-        echo -n "恢复AstrBot数据... "
-        rm -rf astrbot/data 2>/dev/null
-        mkdir -p astrbot/data
-        cp -r "$restore_dir/astrbot_data"/* astrbot/data/ 2>/dev/null
-        echo -e "${GREEN}✓${RESET}"
+    if [ -d "$backup_path/astrbot_data" ]; then
+        echo -e "${CYAN}恢复AstrBot数据...${RESET}"
+        mkdir -p "astrbot/data"
+        cp -r "$backup_path/astrbot_data"/* "astrbot/data/" 2>/dev/null || true
     fi
     
     # 恢复NapCat数据
-    if [ -d "$restore_dir/napcat_data" ]; then
-        echo -n "恢复NapCat数据... "
-        rm -rf napcat/data 2>/dev/null
-        mkdir -p napcat/data
-        cp -r "$restore_dir/napcat_data"/* napcat/data/ 2>/dev/null
-        echo -e "${GREEN}✓${RESET}"
+    if [ -d "$backup_path/napcat_data" ]; then
+        echo -e "${CYAN}恢复NapCat数据...${RESET}"
+        mkdir -p "napcat/data"
+        cp -r "$backup_path/napcat_data"/* "napcat/data/" 2>/dev/null || true
     fi
     
-    # 恢复共享文件夹
-    if [ -d "$restore_dir/shared_folder" ]; then
-        echo -n "恢复共享文件夹... "
-        rm -rf "$SHARED_DIR" 2>/dev/null
-        mkdir -p "$SHARED_DIR"
-        cp -r "$restore_dir/shared_folder"/* "$SHARED_DIR/" 2>/dev/null
-        chmod -R 777 "$SHARED_DIR"
-        echo -e "${GREEN}✓${RESET}"
+    # 恢复插件
+    if [ -d "$backup_path/astrbot_plugins" ]; then
+        echo -e "${CYAN}恢复AstrBot插件...${RESET}"
+        if docker ps --filter "name=astrbot" --format "{{.Names}}" | grep -q "astrbot"; then
+            docker exec astrbot bash -c "cp -r $backup_path/astrbot_plugins/* /AstrBot/plugins/" 2>/dev/null || true
+        fi
     fi
     
-    # 恢复Docker配置
-    if [ -f "$restore_dir/docker_daemon.json" ]; then
-        echo -n "恢复Docker配置... "
-        cp "$restore_dir/docker_daemon.json" /etc/docker/daemon.json 2>/dev/null
-        echo -e "${GREEN}✓${RESET}"
+    if [ -d "$backup_path/napcat_plugins" ]; then
+        echo -e "${CYAN}恢复NapCat插件...${RESET}"
+        if docker ps --filter "name=napcat" --format "{{.Names}}" | grep -q "napcat"; then
+            docker exec napcat bash -c "cp -r $backup_path/napcat_plugins/* /app/plugins/" 2>/dev/null || true
+        fi
     fi
     
-    # 恢复DNS配置
-    if [ -f "$restore_dir/system_resolved.conf" ]; then
-        echo -n "恢复DNS配置... "
-        cp "$restore_dir/system_resolved.conf" /etc/systemd/resolved.conf 2>/dev/null
-        systemctl restart systemd-resolved 2>/dev/null
-        echo -e "${GREEN}✓${RESET}"
-    fi
-    
-    # 步骤4: 重启容器
-    echo -e "\n${CYAN}重启容器...${RESET}"
-    
-    echo -n "启动AstrBot... "
-    docker start astrbot 2>/dev/null && echo -e "${GREEN}✓${RESET}" || echo -e "${RED}✗${RESET}"
-    
-    echo -n "启动NapCat... "
-    docker start napcat 2>/dev/null && echo -e "${GREEN}✓${RESET}" || echo -e "${RED}✗${RESET}"
-    
-    # 清理临时文件
-    echo -n "清理临时文件... "
-    rm -rf "$restore_dir"
-    echo -e "${GREEN}✓${RESET}"
-    
-    # 显示恢复结果
-    echo -e "\n${GREEN}════════════════════════════════════════════${RESET}"
-    echo -e "${WHITE}          恢复完成！${RESET}"
-    echo -e "${GREEN}════════════════════════════════════════════${RESET}"
-    
-    echo -e "${WHITE}恢复的备份: ${GREEN}$backup_name${RESET}"
-    echo -e "${WHITE}恢复时间: ${GREEN}$(date)${RESET}"
-    echo -e "${WHITE}当前数据备份: ${GREEN}$current_backup${RESET}"
-    echo -e "${WHITE}容器状态:${RESET}"
-    
-    sleep 2
-    
-    # 检查容器状态
-    check_container_status "astrbot"
-    check_container_status "napcat"
-    
-    # 记录恢复日志
-    echo "$(date) | RESTORE | $backup_name | 成功" >> "$BACKUP_DIR/restore_history.log"
-    
-    echo -e "\n${GREEN}${ICON_CHECK} 恢复完成！按任意键继续...${RESET}"
-    read -p ""
+    echo -e "${GREEN}✅ 备份恢复完成${RESET}"
+    echo -e "${YELLOW}注意：需要重启容器以使配置生效${RESET}"
 }
 
-# 清理旧备份
-cleanup_old_backups() {
-    echo -e "\n${YELLOW}${ICON_WARN} 清理旧备份文件${RESET}"
+list_backups() {
+    echo -e "\n${CYAN}备份列表:${RESET}"
+    if [ -d "$BACKUP_DIR" ]; then
+        local count=0
+        find "$BACKUP_DIR" -name "backup_*" -type d | sort -r | while read dir; do
+            local size=$(du -sh "$dir" 2>/dev/null | cut -f1 || echo "未知")
+            local date_str=$(basename "$dir" | sed 's/backup_//')
+            local file_count=$(find "$dir" -type f 2>/dev/null | wc -l || echo "0")
+            ((count++))
+            echo -e "  ${CYAN}📁 ${dir}${RESET}"
+            echo -e "     ${GRAY}大小: ${size} | 文件: ${file_count}个 | 日期: ${date_str}${RESET}"
+        done
+        
+        if [ "$count" -eq 0 ]; then
+            echo -e "${YELLOW}暂无备份${RESET}"
+        fi
+    else
+        echo -e "${YELLOW}暂无备份${RESET}"
+    fi
+}
+
+backup_plugins() {
+    echo -e "\n${CYAN}${ICON_PLUGIN} 插件专用备份${RESET}"
     echo -e "${CYAN}════════════════════════════════════════════${RESET}"
     
-    # 显示当前备份情况
-    local total_backups=$(find "$BACKUP_DIR" -maxdepth 1 -name "*.tar.gz" -o -name "*backup_*" -type d | wc -l)
-    local total_size=$(du -sh "$BACKUP_DIR" 2>/dev/null | cut -f1)
+    local backup_dir="$BACKUP_DIR/plugins_backup_$(date +%Y%m%d_%H%M%S)"
+    mkdir -p "$backup_dir"
     
-    echo -e "${WHITE}当前备份: ${GREEN}$total_backups 个${RESET}"
-    echo -e "${WHITE}占用空间: ${GREEN}$total_size${RESET}"
+    echo -e "备份目标目录: $backup_dir"
     
-    if [ "$total_backups" -eq 0 ]; then
-        echo -e "${YELLOW}没有可清理的备份${RESET}"
-        return
+    # 备份AstrBot插件
+    echo -e "\n${CYAN}备份AstrBot插件...${RESET}"
+    if docker ps --filter "name=astrbot" --format "{{.Names}}" | grep -q "astrbot"; then
+        if docker exec astrbot bash -c "ls /AstrBot/plugins/" >/dev/null 2>&1; then
+            docker cp astrbot:/AstrBot/plugins "$backup_dir/astrbot_plugins" 2>/dev/null
+            echo -e "${GREEN}✅ AstrBot插件备份完成${RESET}"
+            
+            # 列出备份的插件
+            local plugin_count=$(find "$backup_dir/astrbot_plugins" -name "*.py" -o -name "*.json" 2>/dev/null | wc -l)
+            echo -e "${GRAY}  插件数量: ${plugin_count}个${RESET}"
+        else
+            echo -e "${YELLOW}⚠️  AstrBot插件目录不存在${RESET}"
+        fi
+    else
+        echo -e "${YELLOW}⚠️  AstrBot容器未运行${RESET}"
     fi
     
-    echo -e "\n${CYAN}清理策略:${RESET}"
-    echo -e "  ${WHITE}[1] ${GREEN}保留最近7天的备份${RESET}"
-    echo -e "  ${WHITE}[2] ${GREEN}保留最近30天的备份${RESET}"
-    echo -e "  ${WHITE}[3] ${GREEN}保留最近10个备份${RESET}"
-    echo -e "  ${WHITE}[4] ${GREEN}保留最近30个备份${RESET}"
-    echo -e "  ${WHITE}[5] ${RED}清理所有备份${RESET}"
-    echo -e "  ${WHITE}[6] ${YELLOW}手动选择清理${RESET}"
+    # 备份NapCat插件
+    echo -e "\n${CYAN}备份NapCat插件...${RESET}"
+    if docker ps --filter "name=napcat" --format "{{.Names}}" | grep -q "napcat"; then
+        if docker exec napcat bash -c "ls /app/plugins/" >/dev/null 2>&1; then
+            docker cp napcat:/app/plugins "$backup_dir/napcat_plugins" 2>/dev/null
+            echo -e "${GREEN}✅ NapCat插件备份完成${RESET}"
+            
+            # 列出备份的插件
+            local plugin_count=$(find "$backup_dir/napcat_plugins" -name "*.js" -o -name "*.json" 2>/dev/null | wc -l)
+            echo -e "${GRAY}  插件数量: ${plugin_count}个${RESET}"
+        else
+            echo -e "${YELLOW}⚠️  NapCat插件目录不存在${RESET}"
+        fi
+    else
+        echo -e "${YELLOW}⚠️  NapCat容器未运行${RESET}"
+    fi
     
-    echo -ne "\n${YELLOW}选择清理策略 (1-6, 0取消): ${RESET}"
-    read -r strategy
+    # 备份配置
+    echo -e "\n${CYAN}备份配置文件...${RESET}"
     
-    case "$strategy" in
-        1) # 保留最近7天
-            cleanup_by_days 7
-            ;;
-        2) # 保留最近30天
-            cleanup_by_days 30
-            ;;
-        3) # 保留最近10个
-            cleanup_by_count 10
-            ;;
-        4) # 保留最近30个
-            cleanup_by_count 30
-            ;;
-        5) # 清理所有
-            cleanup_all_backups
-            ;;
-        6) # 手动选择
-            cleanup_manual_selection
-            ;;
-        0)
-            echo -e "${GRAY}取消清理${RESET}"
-            return
-            ;;
-        *)
-            echo -e "${RED}无效选择${RESET}"
-            return
-            ;;
-    esac
+    # AstrBot配置
+    if docker ps --filter "name=astrbot" --format "{{.Names}}" | grep -q "astrbot"; then
+        docker exec astrbot bash -c "find /AstrBot -name '*.json' -o -name '*.yml' -o -name '*.yaml'" 2>/dev/null | head -20 | while read -r config_file; do
+            local dest_path="$backup_dir/astrbot_config${config_file#/AstrBot}"
+            mkdir -p "$(dirname "$dest_path")"
+            docker exec astrbot bash -c "cat '$config_file'" > "$dest_path" 2>/dev/null && \
+                echo -e "${GRAY}  已备份: ${config_file}${RESET}"
+        done
+    fi
     
-    # 显示清理结果
-    local new_count=$(find "$BACKUP_DIR" -maxdepth 1 -name "*.tar.gz" -o -name "*backup_*" -type d | wc -l)
-    local new_size=$(du -sh "$BACKUP_DIR" 2>/dev/null | cut -f1)
+    # NapCat配置
+    if docker ps --filter "name=napcat" --format "{{.Names}}" | grep -q "napcat"; then
+        docker exec napcat bash -c "find /app -name '*.json' -o -name '*.yml' -o -name '*.yaml'" 2>/dev/null | head -20 | while read -r config_file; do
+            local dest_path="$backup_dir/napcat_config${config_file#/app}"
+            mkdir -p "$(dirname "$dest_path")"
+            docker exec napcat bash -c "cat '$config_file'" > "$dest_path" 2>/dev/null && \
+                echo -e "${GRAY}  已备份: ${config_file}${RESET}"
+        done
+    fi
     
-    echo -e "\n${GREEN}清理完成！${RESET}"
-    echo -e "${WHITE}剩余备份: ${GREEN}$new_count 个${RESET}"
-    echo -e "${WHITE}剩余空间: ${GREEN}$new_size${RESET}"
-    echo -e "${WHITE}清理数量: ${GREEN}$((total_backups - new_count)) 个${RESET}"
+    # 创建备份信息
+    cat > "$backup_dir/backup_info.txt" << EOF
+插件备份信息
+备份时间: $(date)
+脚本版本: $CURRENT_VERSION
+备份内容:
+  - AstrBot插件目录
+  - NapCat插件目录
+  - AstrBot配置文件
+  - NapCat配置文件
+恢复方法:
+  1. 停止容器: docker stop astrbot napcat
+  2. 复制文件: docker cp 备份目录/astrbot_plugins astrbot:/AstrBot/plugins
+  3. 重启容器: docker start astrbot napcat
+EOF
+    
+    local total_size=$(du -sh "$backup_dir" 2>/dev/null | cut -f1 || echo "未知")
+    local total_files=$(find "$backup_dir" -type f 2>/dev/null | wc -l || echo "0")
+    
+    echo -e "\n${GREEN}════════════════════════════════════════════${RESET}"
+    echo -e "${WHITE}          插件备份完成${RESET}"
+    echo -e "${GREEN}════════════════════════════════════════════${RESET}"
+    echo -e "${CYAN}备份目录: ${WHITE}$backup_dir${RESET}"
+    echo -e "${CYAN}总大小: ${WHITE}${total_size}${RESET}"
+    echo -e "${CYAN}文件数量: ${WHITE}${total_files}个${RESET}"
+    echo -e "\n${YELLOW}⚠️  重要：请妥善保管备份文件${RESET}"
 }
 
-# 按天数清理备份
-cleanup_by_days() {
-    local days_to_keep=$1
+confirm_action() {
+    local action_desc="$1"
+    local default="${2:-Y}"
     
-    echo -e "\n${CYAN}清理 $days_to_keep 天前的备份...${RESET}"
+    echo ""
+    echo -ne "${YELLOW}${ICON_WARN} 即将执行：${action_desc}，是否继续？[Y/n]: ${RESET}"
+    read -r confirm
+    confirm=${confirm:-$default}
     
-    local files_to_delete=$(find "$BACKUP_DIR" -maxdepth 1 -name "*.tar.gz" -o -name "*backup_*" -type d -mtime +$days_to_keep 2>/dev/null)
-    
-    if [ -z "$files_to_delete" ]; then
-        echo -e "${YELLOW}没有超过 ${days_to_keep} 天的备份${RESET}"
-        return
+    if [[ "$confirm" =~ ^[Yy]$ ]] || [ -z "$confirm" ]; then
+        return 0
+    else
+        echo -e "${GRAY}操作已取消${RESET}"
+        return 1
     fi
-    
-    local delete_count=$(echo "$files_to_delete" | wc -l)
-    local total_size=0
-    
-    # 计算总大小
-    while IFS= read -r file; do
-        local size=$(du -sb "$file" 2>/dev/null | cut -f1)
-        total_size=$((total_size + size))
-    done <<< "$files_to_delete"
-    
-    local human_size=$(numfmt --to=iec $total_size 2>/dev/null || echo "$total_size 字节")
-    
-    echo -e "${WHITE}将删除 ${delete_count} 个备份，释放 ${human_size} 空间${RESET}"
-    
-    # 显示将要删除的文件
-    echo -e "\n${CYAN}将要删除的备份:${RESET}"
-    echo "$files_to_delete" | head -10 | while read file; do
-        echo "  $(basename "$file")"
-    done
-    
-    if [ "$delete_count" -gt 10 ]; then
-        echo -e "  ... 还有 $((delete_count - 10)) 个文件"
-    fi
-    
-    if ! confirm_action "确认删除以上备份文件"; then
-        return
-    fi
-    
-    # 执行删除
-    echo "$files_to_delete" | while read file; do
-        echo -n "删除 $(basename "$file") ... "
-        rm -rf "$file"
-        echo -e "${GREEN}✓${RESET}"
-    done
-    
-    echo -e "\n${GREEN}已删除 $delete_count 个旧备份${RESET}"
 }
 
-# 按数量清理备份
-cleanup_by_count() {
-    local count_to_keep=$1
-    
-    echo -e "\n${CYAN}保留最近 $count_to_keep 个备份...${RESET}"
-    
-    # 获取所有备份文件，按时间排序
-    local all_backups=($(find "$BACKUP_DIR" -maxdepth 1 -name "*.tar.gz" -o -name "*backup_*" -type d -printf "%T@ %p\n" 2>/dev/null | sort -rn | cut -d' ' -f2-))
-    
-    local total_count=${#all_backups[@]}
-    
-    if [ "$total_count" -le "$count_to_keep" ]; then
-        echo -e "${YELLOW}只有 $total_count 个备份，无需清理${RESET}"
-        return
+safe_kill() {
+    local pid=$1
+    if [ -n "$pid" ] && ps -p "$pid" >/dev/null 2>&1; then
+        kill "$pid" >/dev/null 2>&1
+        sleep 0.5
+        if ps -p "$pid" >/dev/null 2>&1; then
+            kill -9 "$pid" >/dev/null 2>&1
+        fi
     fi
-    
-    local files_to_delete=("${all_backups[@]:$count_to_keep}")
-    local delete_count=${#files_to_delete[@]}
-    local total_size=0
-    
-    # 计算总大小
-    for file in "${files_to_delete[@]}"; do
-        local size=$(du -sb "$file" 2>/dev/null | cut -f1)
-        total_size=$((total_size + size))
-    done
-    
-    local human_size=$(numfmt --to=iec $total_size 2>/dev/null || echo "$total_size 字节")
-    
-    echo -e "${WHITE}将删除 ${delete_count} 个备份，释放 ${human_size} 空间${RESET}"
-    
-    # 显示将要删除的文件
-    echo -e "\n${CYAN}将要删除的备份:${RESET}"
-    for ((i=0; i<${#files_to_delete[@]} && i<10; i++)); do
-        echo "  $(basename "${files_to_delete[$i]}")"
-    done
-    
-    if [ "$delete_count" -gt 10 ]; then
-        echo -e "  ... 还有 $((delete_count - 10)) 个文件"
-    fi
-    
-    if ! confirm_action "确认删除以上备份文件"; then
-        return
-    fi
-    
-    # 执行删除
-    for file in "${files_to_delete[@]}"; do
-        echo -n "删除 $(basename "$file") ... "
-        rm -rf "$file"
-        echo -e "${GREEN}✓${RESET}"
-    done
-    
-    echo -e "\n${GREEN}已删除 $delete_count 个旧备份${RESET}"
 }
 
-# 辅助函数：静默验证备份
-verify_single_backup_silent() {
-    local backup_path="$1"
+monitor_speed_mb() {
+    echo -e "\n${CYAN}${ICON_NETWORK} 实时网速监控（M/s）${RESET}"
+    echo -e "${GRAY}按任意键停止监控${RESET}"
     
-    if [[ "$backup_path" == *.tar.gz ]]; then
-        tar -tzf "$backup_path" >/dev/null 2>&1
-        return $?
-    elif [ -d "$backup_path" ]; then
-        [ -f "$backup_path/backup_info.md" ] || [ -f "$backup_path/backup_info.txt" ]
-        return $?
+    if [ -f "/sys/class/net/${DEFAULT_IFACE}/statistics/rx_bytes" ]; then
+        local initial_rx=$(cat /sys/class/net/${DEFAULT_IFACE}/statistics/rx_bytes 2>/dev/null || echo 0)
+        local initial_tx=$(cat /sys/class/net/${DEFAULT_IFACE}/statistics/tx_bytes 2>/dev/null || echo 0)
+        
+        # 设置超时机制
+        local timeout=300  # 5分钟超时
+        local start_time=$(date +%s)
+        
+        while true; do
+            # 检查是否超时
+            local current_time=$(date +%s)
+            if [ $((current_time - start_time)) -gt $timeout ]; then
+                echo -e "\n${YELLOW}监控超时，自动停止${RESET}"
+                break
+            fi
+            
+            # 检查是否有按键输入（非阻塞）
+            read -t 1 -n 1 && break
+            
+            sleep 1
+            local current_rx=$(cat /sys/class/net/${DEFAULT_IFACE}/statistics/rx_bytes 2>/dev/null || echo 0)
+            local current_tx=$(cat /sys/class/net/${DEFAULT_IFACE}/statistics/tx_bytes 2>/dev/null || echo 0)
+            
+            local rx_speed=$(echo "scale=2; ($current_rx - $initial_rx) / 1024 / 1024" | bc 2>/dev/null || echo "0.00")
+            local tx_speed=$(echo "scale=2; ($current_tx - $initial_tx) / 1024 / 1024" | bc 2>/dev/null || echo "0.00")
+            
+            printf "\r${GREEN}↓ ${rx_speed:0:6} M/s ${RESET}| ${BLUE}↑ ${tx_speed:0:6} M/s${RESET} ${GRAY}[按任意键停止]${RESET}"
+            
+            initial_rx=$current_rx
+            initial_tx=$current_tx
+        done
+    else
+        echo -e "${YELLOW}${ICON_WARN} 无法获取网卡信息，跳过网速监控！${RESET}"
     fi
-    
-    return 1
+    printf "\r\033[K"
+    echo -e "${GREEN}网速监控已停止${RESET}"
 }
 
+# 修复的URL提取函数
 extract_urls_from_logs() {
     local target=${1:-"both"}  # 默认为both，同时提取两个容器的日志
     local urls=""
+    local temp_file="/tmp/url_extract_$(date +%s).txt"
+    
+    echo -e "\n${CYAN}正在提取URL...${RESET}"
     
     if [ "$target" = "both" ] || [ "$target" = "astrbot" ]; then
         if docker ps -a --format "{{.Names}}" | grep -q "^astrbot$"; then
-            urls+=$(timeout 10 docker logs astrbot 2>/dev/null | grep -Eo 'https?://[^"[:space:]]+' | sort -u)
-            [ -n "$urls" ] && urls+=$'\n'
+            echo -e "${CYAN}提取AstrBot日志中的URL（包含6185）...${RESET}"
+            # 只提取包含6185的URL
+            timeout 15 docker logs astrbot --tail=100 2>/dev/null | \
+                grep -Eo 'https?://[^[:space:]]*6185[^[:space:]]*' | \
+                sort -u | while read -r url; do
+                    echo "$url" >> "$temp_file"
+                done
         fi
     fi
     
     if [ "$target" = "both" ] || [ "$target" = "napcat" ]; then
         if docker ps -a --format "{{.Names}}" | grep -q "^napcat$"; then
-            urls+=$(timeout 10 docker logs napcat 2>/dev/null | grep -Eo 'https?://[^"[:space:]]+' | sort -u)
+            echo -e "${CYAN}提取NapCat日志中的URL（包含token或6099）...${RESET}"
+            # 只提取包含token或6099的URL
+            timeout 15 docker logs napcat --tail=100 2>/dev/null | \
+                grep -Eo 'https?://[^[:space:]]*(token|6099)[^[:space:]]*' | \
+                sort -u | while read -r url; do
+                    echo "$url" >> "$temp_file"
+                done
         fi
     fi
     
-    if [ -n "$urls" ]; then
+    if [ -s "$temp_file" ]; then
         local url_file="${LOG_DIR}/extracted_urls_$(date +%Y%m%d_%H%M%S).txt"
-        echo "$urls" > "$url_file"
+        cp "$temp_file" "$url_file"
         
-        echo -e "\n${CYAN}提取到的URL:${RESET}"
-        echo "$urls"
+        echo -e "\n${GREEN}✅ 提取到的URL:${RESET}"
+        cat "$temp_file"
         echo -e "\n${GREEN}✅ URL已保存到: $url_file${RESET}"
+        
+        # 显示统计信息
+        local count=$(wc -l < "$temp_file")
+        echo -e "${GRAY}共提取到 ${count} 个URL${RESET}"
     else
-        echo -e "${YELLOW}⚠️  未找到URL或读取超时${RESET}"
+        echo -e "${YELLOW}⚠️  未找到符合条件的URL${RESET}"
+        echo -e "${GRAY}可能原因："
+        echo -e "  1. 容器没有运行"
+        echo -e "  2. 没有符合条件的URL"
+        echo -e "  3. 日志中没有URL信息${RESET}"
     fi
+    
+    rm -f "$temp_file"
 }
 
 monitor_system_resources() {
@@ -1909,7 +806,7 @@ test_network_connectivity() {
     
     for host in "${test_hosts[@]}"; do
         echo -n "测试 $host ... "
-        if ping -c 1 -W 2 "$host" &>/dev/null; then
+        if timeout 5 ping -c 1 -W 2 "$host" &>/dev/null; then
             echo -e "${GREEN}${ICON_CHECK}${RESET}"
             ((success_count++))
         else
@@ -2050,8 +947,8 @@ check_shared_directory() {
     if [ -d "$SHARED_DIR" ]; then
         local perm=$(ls -ld "$SHARED_DIR" | awk '{print $1}')
         local owner=$(ls -ld "$SHARED_DIR" | awk '{print $3":"$4}')
-        local size=$(du -sh "$SHARED_DIR" | awk '{print $1}')
-        local file_count=$(find "$SHARED_DIR" -type f | wc -l)
+        local size=$(du -sh "$SHARED_DIR" 2>/dev/null | awk '{print $1}' || echo "未知")
+        local file_count=$(find "$SHARED_DIR" -type f 2>/dev/null | wc -l || echo "0")
         
         echo -e "目录: ${WHITE}$SHARED_DIR${RESET}"
         echo -e "权限: ${WHITE}$perm${RESET}"
@@ -2077,7 +974,7 @@ check_shared_directory() {
             echo -e "\n${CYAN}最近文件:${RESET}"
             find "$SHARED_DIR" -type f -printf "%T+ %p\n" 2>/dev/null | sort -r | head -3 | while read line; do
                 echo "  ${line#* }"
-            done
+            done || echo "  无法列出文件"
         fi
     else
         echo -e "${RED}${ICON_CROSS} 共享目录不存在${RESET}"
@@ -2109,7 +1006,7 @@ test_shared_folder() {
     
     # 创建测试文件
     local test_file="$SHARED_DIR/mount_test.txt"
-    local test_content="这是挂载测试文件"
+    local test_content="这是挂载测试文件 - $(date)"
     
     echo -e "${WHITE}在宿主机创建测试文件...${RESET}"
     echo "$test_content" > "$test_file"
@@ -2121,7 +1018,7 @@ test_shared_folder() {
     # 测试NapCat
     if $napcat_exists; then
         echo -e "\n${WHITE}测试NapCat容器读取...${RESET}"
-        if docker exec napcat test -f "/app/sharedFolder/$(basename "$test_file")" 2>/dev/null; then
+        if timeout 5 docker exec napcat test -f "/app/sharedFolder/$(basename "$test_file")" 2>/dev/null; then
             echo -e "${GREEN}${ICON_CHECK} NapCat可以读取共享文件${RESET}"
             napcat_ok=true
         else
@@ -2145,7 +1042,7 @@ test_shared_folder() {
     # 测试AstrBot
     if $astrbot_exists; then
         echo -e "\n${WHITE}测试AstrBot容器读取...${RESET}"
-        if docker exec astrbot test -f "/app/sharedFolder/$(basename "$test_file")" 2>/dev/null; then
+        if timeout 5 docker exec astrbot test -f "/app/sharedFolder/$(basename "$test_file")" 2>/dev/null; then
             echo -e "${GREEN}${ICON_CHECK} AstrBot可以读取共享文件${RESET}"
             astrbot_ok=true
         else
@@ -2215,30 +1112,20 @@ fix_shared_mount() {
         napcat_running=true
     fi
     
-    # 获取当前容器的挂载配置
-    echo -e "\n${CYAN}检查当前挂载配置...${RESET}"
-    
-    local astrbot_mounts=$(docker inspect astrbot --format='{{range .Mounts}}{{printf "%-40s -> %s\n" .Source .Destination}}{{end}}' 2>/dev/null)
-    local napcat_mounts=$(docker inspect napcat --format='{{range .Mounts}}{{printf "%-40s -> %s\n" .Source .Destination}}{{end}}' 2>/dev/null)
-    
-    echo -e "${WHITE}AstrBot挂载:${RESET}"
-    echo "$astrbot_mounts" || echo "  无挂载信息"
-    
-    echo -e "\n${WHITE}NapCat挂载:${RESET}"
-    echo "$napcat_mounts" || echo "  无挂载信息"
-    
     # 备份重要数据
     echo -e "\n${YELLOW}${ICON_WARN} 备份容器数据...${RESET}"
     local backup_dir="/tmp/container_backup_$(date +%Y%m%d_%H%M%S)"
     mkdir -p "$backup_dir"
     
     if $astrbot_running; then
-        docker cp astrbot:/AstrBot/data "$backup_dir/astrbot_data" 2>/dev/null
+        timeout 30 docker cp astrbot:/AstrBot/data "$backup_dir/astrbot_data" 2>/dev/null || true
+        timeout 30 docker cp astrbot:/AstrBot/plugins "$backup_dir/astrbot_plugins" 2>/dev/null || true
         docker inspect astrbot > "$backup_dir/astrbot.json" 2>/dev/null
     fi
     
     if $napcat_running; then
-        docker cp napcat:/app/data "$backup_dir/napcat_data" 2>/dev/null
+        timeout 30 docker cp napcat:/app/data "$backup_dir/napcat_data" 2>/dev/null || true
+        timeout 30 docker cp napcat:/app/plugins "$backup_dir/napcat_plugins" 2>/dev/null || true
         docker inspect napcat > "$backup_dir/napcat.json" 2>/dev/null
     fi
     
@@ -2377,7 +1264,7 @@ EOF
     echo -e "${CYAN}${ICON_INFO} 步骤5：验证DNS配置...${RESET}"
     
     echo -e "\n${WHITE}当前DNS配置:${RESET}"
-    echo -e "${GRAY}$(cat /etc/resolv.conf)${RESET}"
+    echo -e "${GRAY}$(cat /etc/resolv.conf 2>/dev/null | head -10)${RESET}"
     
     echo -e "\n${WHITE}测试DNS解析...${RESET}"
     local test_domains=("google.com" "baidu.com" "github.com" "qq.com")
@@ -2385,7 +1272,7 @@ EOF
     
     for domain in "${test_domains[@]}"; do
         echo -n "解析 $domain ... "
-        if timeout 5 dig "$domain" +short | grep -q '[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}'; then
+        if timeout 5 dig "$domain" +short 2>/dev/null | grep -q '[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}'; then
             echo -e "${GREEN}${ICON_CHECK}${RESET}"
             ((success_count++))
         else
@@ -2577,10 +1464,10 @@ check_for_updates() {
         
         case "$update_choice" in
             1)
-                update_script_auto
+                update_script_auto "$remote_version"
                 ;;
             2)
-                show_update_changelog
+                show_update_changelog "$remote_version"
                 ;;
             3)
                 show_manual_update_guide
@@ -2602,6 +1489,8 @@ check_for_updates() {
 }
 
 update_script_auto() {
+    local remote_version="$1"
+    
     echo -e "\n${YELLOW}${ICON_WARN} 警告：自动更新将覆盖当前脚本${RESET}"
     echo -e "${GRAY}建议先备份当前脚本${RESET}"
     
@@ -2673,19 +1562,19 @@ update_script_auto() {
 }
 
 show_update_changelog() {
+    local remote_version="$1"
+    
     echo -e "\n${CYAN}════════════════════════════════════════════${RESET}"
     echo -e "${WHITE}           更新日志${RESET}"
     echo -e "${CYAN}════════════════════════════════════════════${RESET}"
-
-    echo -e "${GREEN}v2.6.2 (2025-12-26)${RESET}"
-    echo -e "  • 完善备份功能"
-    echo -e "  • 优化系统提示"
-    echo -e "  • 重建UI界面"
-
-    echo -e "${GREEN}v2.5.10 (2025-12-26)${RESET}"
-    echo -e "  • 优化系统提示"
-    echo -e "  • 重建UI界面"
-
+    
+    echo -e "${GREEN}v2.6.0 (2025-12-26)${RESET}"
+    echo -e "  • 修复日志提取功能，只提取特定格式URL"
+    echo -e "  • 优化主菜单布局，充分利用屏幕空间"
+    echo -e "  • 完善备份功能，备份插件和配置文件"
+    echo -e "  • 添加超时机制防止脚本卡死"
+    echo -e "  • 优化系统监控和资源显示"
+   
     echo -e "${GREEN}v2.5.9 (2025-12-26)${RESET}"
     echo -e "  • 重建UI界面"
    
@@ -2776,8 +1665,8 @@ print_header() {
     echo -e "${MAGENTA}║  ${CYAN}  ██║  ██║███████║   ██║   ██║  ██║██████╔╝╚██████╔╝   ██║              ${MAGENTA}║${RESET}"
     echo -e "${MAGENTA}║  ${CYAN}  ╚═╝  ╚═╝╚══════╝   ╚═╝   ╚═╝  ╚═╝╚═════╝  ╚═════╝    ╚═╝              ${MAGENTA}║${RESET}"
     echo -e "${MAGENTA}║                                                                              ║${RESET}"
-    echo -e "${MAGENTA}║  ${WHITE}                N a p C a t  智能部署助手  v2.6.2                  ${MAGENTA}║${RESET}"
-    echo -e "${MAGENTA}║  ${GRAY}           修复共享目录矛盾 | 统一DNS配置 | 优化权限管理            ${MAGENTA}║${RESET}"
+    echo -e "${MAGENTA}║  ${WHITE}                N a p C a t  智能部署助手  v2.6.0                  ${MAGENTA}║${RESET}"
+    echo -e "${MAGENTA}║  ${GRAY}           修复日志提取 | 优化菜单布局 | 完善备份功能              ${MAGENTA}║${RESET}"
     echo -e "${MAGENTA}║                                                                              ║${RESET}"
     echo -e "${MAGENTA}╚══════════════════════════════════════════════════════════════════════════════╝${RESET}"
     echo ""
@@ -2789,14 +1678,14 @@ print_system_status() {
     echo -e "${CYAN}╠══════════════════════════════════════════════════════════════════════════════╣${RESET}"
     
     # 获取系统信息
-    local cpu_usage=$(top -bn1 | grep "Cpu(s)" | awk '{print $2}' | cut -d'%' -f1)
-    local mem_total=$(free -h | awk '/^Mem:/{print $2}')
-    local mem_used=$(free -h | awk '/^Mem:/{print $3}')
-    local disk_total=$(df -h / | awk 'NR==2 {print $2}')
-    local disk_used=$(df -h / | awk 'NR==2 {print $3}')
-    local disk_percent=$(df / | awk 'NR==2 {print $5}' | tr -d '%')
-    local load_avg=$(cat /proc/loadavg | awk '{print $1", "$2", "$3}')
-    local uptime_info=$(uptime -p | sed 's/up //')
+    local cpu_usage=$(top -bn1 | grep "Cpu(s)" | awk '{print $2}' | cut -d'%' -f1 2>/dev/null || echo "0")
+    local mem_total=$(free -h 2>/dev/null | awk '/^Mem:/{print $2}' || echo "0")
+    local mem_used=$(free -h 2>/dev/null | awk '/^Mem:/{print $3}' || echo "0")
+    local disk_total=$(df -h / 2>/dev/null | awk 'NR==2 {print $2}' || echo "0")
+    local disk_used=$(df -h / 2>/dev/null | awk 'NR==2 {print $3}' || echo "0")
+    local disk_percent=$(df / 2>/dev/null | awk 'NR==2 {print $5}' | tr -d '%' || echo "0")
+    local load_avg=$(cat /proc/loadavg 2>/dev/null | awk '{print $1", "$2", "$3}' || echo "未知")
+    local uptime_info=$(uptime -p 2>/dev/null | sed 's/up //' || echo "未知")
     
     # 进度条函数
     progress_bar() {
@@ -2817,7 +1706,7 @@ print_system_status() {
     echo -e "${CYAN}║  ${WHITE}🖥  CPU使用率: ${cpu_color}$(progress_bar ${cpu_usage%.*})${WHITE}                             ${CYAN}║${RESET}"
     
     # 内存使用
-    local mem_percent=$(free | awk '/^Mem:/{print $3/$2*100}')
+    local mem_percent=$(free 2>/dev/null | awk '/^Mem:/{print $3/$2*100}' || echo "0")
     local mem_color=$([ "${mem_percent%.*}" -gt 80 ] && echo "$RED" || ([ "${mem_percent%.*}" -gt 50 ] && echo "$YELLOW" || echo "$GREEN"))
     echo -e "${CYAN}║  ${WHITE}💾  内存使用: ${mem_color}$(progress_bar ${mem_percent%.*})${WHITE} ${mem_used}/${mem_total}       ${CYAN}║${RESET}"
     
@@ -2849,8 +1738,8 @@ print_deployment_status() {
     echo -e "${GREEN}║                                                                              ║${RESET}"
     
     # 容器状态
-    local astrbot_status=$(docker inspect -f '{{.State.Status}}' astrbot 2>/dev/null || echo "not_exist")
-    local napcat_status=$(docker inspect -f '{{.State.Status}}' napcat 2>/dev/null || echo "not_exist")
+    local astrbot_status=$(timeout 2 docker inspect -f '{{.State.Status}}' astrbot 2>/dev/null || echo "not_exist")
+    local napcat_status=$(timeout 2 docker inspect -f '{{.State.Status}}' napcat 2>/dev/null || echo "not_exist")
     
     echo -e "${GREEN}║  ${WHITE}容器状态:                                                                 ${GREEN}║${RESET}"
     
@@ -2875,45 +1764,48 @@ print_deployment_status() {
     echo ""
 }
 
+# ===================== 优化后的主菜单布局 =====================
 print_main_menu() {
     echo -e "${BLUE}╔══════════════════════════════════════════════════════════════════════════════╗${RESET}"
-    echo -e "${BLUE}║  ${WHITE}📱 主功能菜单                                                              ${BLUE}║${RESET}"
+    echo -e "${BLUE}║  ${WHITE}📱 主功能菜单                                                                        ${BLUE}║${RESET}"
     echo -e "${BLUE}╠══════════════════════════════════════════════════════════════════════════════╣${RESET}"
     
     echo -e "${BLUE}║                                                                              ║${RESET}"
-    echo -e "${BLUE}║  ${WHITE}┌───────────────── 核心部署 ─────────────────┐${RESET}                       ${BLUE}║${RESET}"
+    echo -e "${BLUE}║  ${WHITE}┌────────────── 核心部署 ──────────────┐${RESET}      ${WHITE}┌────────── 快捷操作 ──────────┐${RESET}  ${BLUE}║${RESET}"
+    
     echo -e "${BLUE}║                                                                              ║${RESET}"
     
-    echo -e "${BLUE}║  ${CYAN}[1] ${GREEN}🌐 网络配置与DNS优化${RESET}                                        ${BLUE}║${RESET}"
-    echo -e "${BLUE}║       ${WHITE}优化网络设置，配置多重DNS解析${RESET}                                    ${BLUE}║${RESET}"
+    # 左侧：核心部署选项（4项）
+    echo -e "${BLUE}║  ${CYAN}[1] ${GREEN}🌐 网络配置${RESET}                                ${BLUE}║${RESET}  ${CYAN}[0] ${GREEN}🚀 一键部署${RESET}                  ${BLUE}║${RESET}"
+    echo -e "${BLUE}║     ${WHITE}优化网络和DNS设置${RESET}                                ${BLUE}║${RESET}     ${WHITE}推荐新手使用${RESET}                ${BLUE}║${RESET}"
+    
     echo -e "${BLUE}║                                                                              ║${RESET}"
     
-    echo -e "${BLUE}║  ${CYAN}[2] ${GREEN}🐳 Docker环境管理${RESET}                                          ${BLUE}║${RESET}"
-    echo -e "${BLUE}║       ${WHITE}安装/卸载Docker，配置镜像加速${RESET}                                    ${BLUE}║${RESET}"
+    echo -e "${BLUE}║  ${CYAN}[2] ${GREEN}🐳 Docker管理${RESET}                              ${BLUE}║${RESET}  ${CYAN}[E] ${CYAN}⚙️  扩展工具${RESET}                  ${BLUE}║${RESET}"
+    echo -e "${BLUE}║     ${WHITE}安装/卸载Docker${RESET}                                  ${BLUE}║${RESET}     ${WHITE}监控/修复/工具${RESET}                ${BLUE}║${RESET}"
+    
     echo -e "${BLUE}║                                                                              ║${RESET}"
     
-    echo -e "${BLUE}║  ${CYAN}[3] ${GREEN}🤖 部署AstrBot机器人${RESET}                                       ${BLUE}║${RESET}"
-    echo -e "${BLUE}║       ${WHITE}端口: 6180-6200, 11451 | Web界面管理${RESET}                            ${BLUE}║${RESET}"
+    echo -e "${BLUE}║  ${CYAN}[3] ${GREEN}🤖 AstrBot${RESET}                                 ${BLUE}║${RESET}  ${CYAN}[C] ${SKY}📋  容器状态${RESET}                  ${BLUE}║${RESET}"
+    echo -e "${BLUE}║     ${WHITE}端口: 6180-6200, 11451${RESET}                           ${BLUE}║${RESET}     ${WHITE}查看详细状态${RESET}                ${BLUE}║${RESET}"
+    
     echo -e "${BLUE}║                                                                              ║${RESET}"
     
-    echo -e "${BLUE}║  ${CYAN}[4] ${GREEN}😺 部署NapCat协议服务${RESET}                                      ${BLUE}║${RESET}"
-    echo -e "${BLUE}║       ${WHITE}端口: 3000, 3001, 6099 | 协议端管理${RESET}                             ${BLUE}║${RESET}"
+    echo -e "${BLUE}║  ${CYAN}[4] ${GREEN}😺 NapCat${RESET}                                  ${BLUE}║${RESET}  ${CYAN}[U] ${YELLOW}🔄  检查更新${RESET}                  ${BLUE}║${RESET}"
+    echo -e "${BLUE}║     ${WHITE}端口: 3000, 3001, 6099${RESET}                           ${BLUE}║${RESET}     ${WHITE}脚本更新${RESET}                     ${BLUE}║${RESET}"
+    
     echo -e "${BLUE}║                                                                              ║${RESET}"
     
-    echo -e "${BLUE}║  ${WHITE}└─────────────────────────────────────────────┘${RESET}                       ${BLUE}║${RESET}"
+    echo -e "${BLUE}║  ${WHITE}└──────────────────────────────────────┘${RESET}      ${WHITE}└────────────────────────────┘${RESET}  ${BLUE}║${RESET}"
     echo -e "${BLUE}║                                                                              ║${RESET}"
     echo -e "${BLUE}╠══════════════════════════════════════════════════════════════════════════════╣${RESET}"
     
-    echo -e "${BLUE}║  ${WHITE}┌─────────────── 快捷操作 ───────────────┐${RESET}                            ${BLUE}║${RESET}"
+    # 底部：退出选项和联系信息
+    echo -e "${BLUE}║  ${CYAN}[Q] ${RED}❌  退出脚本${RESET}                                                      ${BLUE}║${RESET}"
+    
     echo -e "${BLUE}║                                                                              ║${RESET}"
-    
-    echo -e "${BLUE}║  ${CYAN}[0] ${GREEN}🚀 一键完整部署${RESET} (推荐新手使用)                               ${BLUE}║${RESET}"
-    echo -e "${BLUE}║  ${CYAN}[E] ${CYAN}⚙️  扩展工具箱${RESET} (监控/修复/工具)                              ${BLUE}║${RESET}"
-    echo -e "${BLUE}║  ${CYAN}[C] ${SKY}📋  查看详细状态${RESET} (容器/资源)                                 ${BLUE}║${RESET}"
-    echo -e "${BLUE}║  ${CYAN}[U] ${YELLOW}🔄  检查更新${RESET} (脚本更新)                                    ${BLUE}║${RESET}"
-    echo -e "${BLUE}║  ${CYAN}[Q] ${RED}❌  退出脚本${RESET}                                               ${BLUE}║${RESET}"
-    
-    echo -e "${BLUE}║  ${WHITE}└─────────────────────────────────────────┘${RESET}                            ${BLUE}║${RESET}"
+    echo -e "${BLUE}║  ${YELLOW}⚠️  重要声明: ${WHITE}本脚本完全免费，严禁倒卖！${RESET}                               ${BLUE}║${RESET}"
+    echo -e "${BLUE}║  ${CYAN}💝 技术支持: ${WHITE}QQ 3076737056 | 最后更新: 2025年12月26日${RESET}                ${BLUE}║${RESET}"
     echo -e "${BLUE}║                                                                              ║${RESET}"
     echo -e "${BLUE}╚══════════════════════════════════════════════════════════════════════════════╝${RESET}"
     echo ""
@@ -3046,7 +1938,7 @@ install_docker() {
     # 更新apt缓存（清空旧的源信息）
     monitor_speed_mb &
     speed_pid=$!
-    if apt-get update -y 2>&1 | tee -a "$clean_log"; then
+    if timeout 120 apt-get update -y 2>&1 | tee -a "$clean_log"; then
         safe_kill "$speed_pid"
         printf "\r\033[K"
         echo -e "${GREEN}${ICON_CHECK} apt缓存已更新${RESET}"
@@ -3094,7 +1986,7 @@ EOF
     local deps_log="/tmp/docker_deps_install.log"
     echo "=== 安装依赖工具 $(date) ===" >> "$deps_log"
     
-    if apt-get install -y ca-certificates curl gnupg lsb-release 2>&1 | tee "$deps_log"; then
+    if timeout 300 apt-get install -y ca-certificates curl gnupg lsb-release 2>&1 | tee "$deps_log"; then
         echo -e "${GREEN}${ICON_CHECK} 依赖工具安装完成${RESET}"
     else
         echo -e "${YELLOW}${ICON_WARN} 依赖工具安装遇到错误${RESET}"
@@ -3116,11 +2008,11 @@ EOF
     mkdir -p /etc/apt/keyrings
     
     # 下载并导入Docker官方GPG密钥
-    if curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/trusted.gpg.d/docker.gpg 2>&1 | tee "$gpg_log"; then
+    if timeout 60 curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/trusted.gpg.d/docker.gpg 2>&1 | tee "$gpg_log"; then
         echo -e "${GREEN}${ICON_CHECK} Docker官方GPG密钥添加成功${RESET}"
     else
         echo -e "${YELLOW}${ICON_WARN} GPG密钥添加遇到问题，尝试备用方法...${RESET}"
-        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+        timeout 60 curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
         apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 7EA0A9C3F273FCD8 2>&1 | tee -a "$gpg_log"
     fi
     
@@ -3156,7 +2048,7 @@ EOF
     monitor_speed_mb &
     speed_pid=$!
     
-    if apt-get update -y 2>&1 | tee -a "$repo_log"; then
+    if timeout 120 apt-get update -y 2>&1 | tee -a "$repo_log"; then
         safe_kill "$speed_pid"
         printf "\r\033[K"
         echo -e "${GREEN}${ICON_CHECK} apt包索引更新完成${RESET}"
@@ -3174,7 +2066,7 @@ EOF
     speed_pid=$!
     
     local install_log="/tmp/docker_install.log"
-    if apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin 2>&1 | tee "$install_log"; then
+    if timeout 600 apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin 2>&1 | tee "$install_log"; then
         safe_kill "$speed_pid"
         printf "\r\033[K"
         echo -e "${GREEN}${ICON_CHECK} Docker组件安装完成${RESET}"
@@ -3253,7 +2145,7 @@ EOF
     # ===================== 步骤13: 测试Docker安装 =====================
     echo -e "\n${CYAN}[13/15] 测试Docker安装...${RESET}"
     local test_log="/tmp/docker_test.log"
-    local test_output=$(docker run --rm hello-world 2>&1)
+    local test_output=$(timeout 30 docker run --rm hello-world 2>&1)
     echo "$test_output" | tee "$test_log"
     
     if echo "$test_output" | grep -q "Hello from Docker"; then
@@ -3312,7 +2204,7 @@ uninstall_docker() {
     # 卸载Docker包
     echo -e "\n${CYAN}[2/5] 卸载Docker软件包...${RESET}"
     local uninstall_log="/tmp/docker_uninstall.log"
-    local uninstall_output=$(apt-get purge -y \
+    local uninstall_output=$(timeout 300 apt-get purge -y \
         docker-ce \
         docker-ce-cli \
         containerd.io \
@@ -3336,7 +2228,7 @@ uninstall_docker() {
     
     # 清理未使用的依赖
     echo -e "\n${CYAN}[4/5] 清理未使用的依赖...${RESET}"
-    apt-get autoremove -y 2>&1 | tee -a "$uninstall_log"
+    timeout 180 apt-get autoremove -y 2>&1 | tee -a "$uninstall_log"
     echo -e "${GREEN}${ICON_CHECK} 依赖清理完成${RESET}"
     
     # 验证卸载
@@ -3385,7 +2277,7 @@ step3() {
     # 检查容器是否存在
     if docker ps -a --filter "name=astrbot" --format "{{.Names}}" | grep -q "astrbot"; then
         # 检查容器状态
-        local container_state=$(docker inspect -f '{{.State.Status}}' astrbot 2>/dev/null || echo "unknown")
+        local container_state=$(timeout 2 docker inspect -f '{{.State.Status}}' astrbot 2>/dev/null || echo "unknown")
         
         if [ "$container_state" = "running" ]; then
             echo -e "${GREEN}${ICON_CHECK} AstrBot容器已在运行${RESET}"
@@ -3405,7 +2297,7 @@ step3() {
             echo -e "${YELLOW}${ICON_WARN} AstrBot容器存在但未运行，正在尝试启动...${RESET}"
             
             # 尝试启动容器
-            if docker start astrbot; then
+            if timeout 10 docker start astrbot; then
                 echo -e "${GREEN}${ICON_CHECK} AstrBot容器启动成功${RESET}"
                 sleep 3
                 
@@ -3433,7 +2325,7 @@ step3() {
     mkdir -p astrbot/data astrbot/config
     
     echo -e "${CYAN}${ICON_LOAD} 拉取AstrBot镜像...${RESET}"
-    if docker pull soulter/astrbot:latest; then
+    if timeout 300 docker pull soulter/astrbot:latest; then
         safe_kill "$speed_pid"
         printf "\r\033[K"  # 清除网速监控行
         echo -e "${GREEN}${ICON_CHECK} AstrBot镜像拉取成功${RESET}"
@@ -3498,7 +2390,7 @@ step4() {
     # 检查容器是否存在
     if docker ps -a --filter "name=napcat" --format "{{.Names}}" | grep -q "napcat"; then
         # 检查容器状态
-        local container_state=$(docker inspect -f '{{.State.Status}}' napcat 2>/dev/null || echo "unknown")
+        local container_state=$(timeout 2 docker inspect -f '{{.State.Status}}' napcat 2>/dev/null || echo "unknown")
         
         if [ "$container_state" = "running" ]; then
             echo -e "${GREEN}${ICON_CHECK} NapCat容器已在运行${RESET}"
@@ -3518,7 +2410,7 @@ step4() {
             echo -e "${YELLOW}${ICON_WARN} NapCat容器存在但未运行，正在尝试启动...${RESET}"
             
             # 尝试启动容器
-            if docker start napcat; then
+            if timeout 10 docker start napcat; then
                 echo -e "${GREEN}${ICON_CHECK} NapCat容器启动成功${RESET}"
                 sleep 3
                 
@@ -3546,7 +2438,7 @@ step4() {
     mkdir -p napcat/data napcat/config
     
     echo -e "${CYAN}${ICON_LOAD} 拉取NapCat镜像...${RESET}"
-    if docker pull mlikiowa/napcat-docker:latest; then
+    if timeout 300 docker pull mlikiowa/napcat-docker:latest; then
         safe_kill "$speed_pid"
         printf "\r\033[K"  # 清除网速监控行
         echo -e "${GREEN}${ICON_CHECK} NapCat镜像拉取成功${RESET}"
@@ -3751,35 +2643,34 @@ show_extended_menu() {
 }
 
 # ===================== 主菜单 =====================
-# 找到原有的 show_main_menu 函数，替换菜单显示部分
 show_main_menu() {
     while true; do
         print_header
-        echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════════════════╗${RESET}"
-        echo -e "${CYAN}║  ${WHITE}${ICON_ROCKET} AstrBot+NapCat 智能部署助手 v${CURRENT_VERSION}                ${CYAN}║${RESET}"
-        echo -e "${CYAN}╠══════════════════════════════════════════════════════════════════════════════╣${RESET}"
+        print_system_status
+        print_deployment_status
+        print_main_menu
         
-        # 双列布局：左侧基础功能，右侧扩展功能
-        echo -e "${CYAN}║  ${WHITE}基础功能                                  扩展功能${RESET}                   ${CYAN}║${RESET}"
-        echo -e "${CYAN}║  ${CYAN}[1]  ${GREEN}全新部署${RESET}                           ${CYAN}[9]  ${YELLOW}容器状态详情${RESET}    ${CYAN}║${RESET}"
-        echo -e "${CYAN}║  ${CYAN}[2]  ${GREEN}更新部署${RESET}                           ${CYAN}[10] ${YELLOW}查看过滤日志${RESET}    ${CYAN}║${RESET}"  # 对应新日志功能
-        echo -e "${CYAN}║  ${CYAN}[3]  ${GREEN}启动服务${RESET}                           ${CYAN}[11] ${YELLOW}重启容器${RESET}        ${CYAN}║${RESET}"
-        echo -e "${CYAN}║  ${CYAN}[4]  ${GREEN}停止服务${RESET}                           ${CYAN}[12] ${YELLOW}清理容器${RESET}        ${CYAN}║${RESET}"
-        echo -e "${CYAN}║  ${CYAN}[5]  ${GREEN}查看状态${RESET}                           ${CYAN}[13] ${YELLOW}网速监控${RESET}        ${CYAN}║${RESET}"
-        echo -e "${CYAN}║  ${CYAN}[6]  ${GREEN}配置DNS${RESET}                            ${CYAN}[14] ${YELLOW}数据备份/恢复${RESET}   ${CYAN}║${RESET}"
-        echo -e "${CYAN}║  ${CYAN}[7]  ${GREEN}脚本更新${RESET}                           ${CYAN}[15] ${YELLOW}步骤回滚${RESET}        ${CYAN}║${RESET}"
-        echo -e "${CYAN}║  ${CYAN}[8]  ${GREEN}环境检查${RESET}                           ${CYAN}[16] ${YELLOW}高级设置${RESET}        ${CYAN}║${RESET}"
-        echo -e "${CYAN}║                                                                              ║${RESET}"
-        echo -e "${CYAN}║  ${RED}[0]  退出脚本${RESET}                                                        ${CYAN}║${RESET}"
-        echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════════════════╝${RESET}"
+        echo -ne "${YELLOW}${ICON_WARN} 请输入选项 (0-4/E/C/U/Q) : ${RESET}"
+        read -r choice
         
-        echo -ne "${YELLOW}请输入操作编号 [0-16]: ${RESET}"
-        read -r main_choice
-        # 保持原有的菜单选项映射逻辑，确保 [10] 对应 show_container_logs
-        case "$main_choice" in
-            # ... 其他选项保持不变 ...
-            10) show_container_logs ;;  # 新日志功能的入口
-            # ... 其他选项保持不变 ...
+        case "$choice" in
+            1) step1 ;;
+            2) step2 ;;
+            3) step3 ;;
+            4) step4 ;;
+            0) run_all ;;
+            e|E) show_extended_menu ;;
+            c|C) show_container_details ;;
+            u|U) check_for_updates ;;
+            q|Q) 
+                echo -e "\n${CYAN}感谢使用，再见！${RESET}"
+                cleanup
+                break
+                ;;
+            *)
+                echo -e "\n${RED}❌ 无效选择！请重新输入${RESET}"
+                sleep 1
+                ;;
         esac
     done
 }
@@ -3789,9 +2680,8 @@ show_main_menu() {
 init_script() {
     echo -e "${MAGENTA}"
     echo "╔══════════════════════════════════════════════════════════╗"
-    echo "║              智能部署助手 v2.6.2 初始化                 ║"
-    echo "║          修复共享目录矛盾，统一DNS配置                   ║"
-    echo "║          优化权限管理，改进更新检测                     ║"
+    echo "║              智能部署助手 v2.6.0 初始化                 ║"
+    echo "║          修复日志提取 | 优化菜单布局 | 完善备份功能     ║"
     echo "║          本脚本完全免费，严禁倒卖！                     ║"
     echo "║          技术支持QQ: 3076737056                         ║"
     echo "╚══════════════════════════════════════════════════════════╝"
@@ -3836,20 +2726,7 @@ main() {
     init_script
     
     # 主循环
-    while true; do
-        show_main_menu
-        
-        case "$choice" in
-            1) step1 ;;
-            2) step2 ;;
-            3) step3 ;;
-            4) step4 ;;
-            0) run_all ;;
-            e|E) show_extended_menu ;;
-            q|Q) echo -e "\n${CYAN}感谢使用，再见！${RESET}"; break ;;
-            *) echo -e "\n${RED}无效选择！${RESET}"; sleep 1 ;;
-        esac
-    done
+    show_main_menu
     
     cleanup
 }
